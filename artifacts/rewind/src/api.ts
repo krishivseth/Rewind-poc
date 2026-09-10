@@ -98,7 +98,13 @@ export const api = {
     request<FileAtStep>(`/api/branches/${branchId}/steps/${index}/file?path=${encodeURIComponent(path)}&with_previous=true`),
   context: (branchId: string, index: number) => request<ContextAtStep>(`/api/branches/${branchId}/steps/${index}/context`),
   diff: (a: string, b: string) => request<DiffResult>(`/api/diff?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`),
-  authCheck: (key: string) => fetch('/api/auth/check', { headers: { 'X-Rewind-Key': key } }).then(r => r.ok),
+  authCheck: async (key: string): Promise<{ ok: boolean; detail?: string }> => {
+    const r = await fetch('/api/auth/check', { headers: { 'X-Rewind-Key': key } })
+    if (r.ok) return { ok: true }
+    let detail = `${r.status} ${r.statusText}`
+    try { detail = (await r.json()).detail ?? detail } catch { /* keep */ }
+    return { ok: false, detail }
+  },
   createSession: (body: { repo_id: string; title: string; task_prompt: string; model_id: string }) =>
     request<{ id: string; root_branch_id: string; branch: Branch }>('/api/sessions', { method: 'POST', body: JSON.stringify(body) }, true),
   fork: (branchId: string, body: { step_index: number; model_id: string; edited_task_prompt?: string; count: number }) =>

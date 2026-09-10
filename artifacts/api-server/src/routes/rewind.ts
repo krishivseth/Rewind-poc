@@ -117,8 +117,9 @@ router.get("/search", wrap(async (req, res) => {
 router.get("/stats", wrap(async (_req, res) => { res.json(await services.stats()); }));
 
 router.get("/auth/check", (req, res) => {
-  if (validKey(req.header("x-rewind-key"))) res.json({ ok: true });
-  else res.status(401).json({ detail: "invalid key" });
+  if (validKey(req.header("x-rewind-key"))) { res.json({ ok: true }); return; }
+  if (!settings.accessKey) { res.status(401).json({ detail: "The server has no REWIND_ACCESS_KEY configured. Add the secret and redeploy." }); return; }
+  res.status(401).json({ detail: req.header("x-rewind-key") ? "That key does not match REWIND_ACCESS_KEY." : "missing X-Rewind-Key" });
 });
 
 // --- write -----------------------------------------------------------------------------------

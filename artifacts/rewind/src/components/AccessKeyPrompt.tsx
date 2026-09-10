@@ -12,10 +12,10 @@ export default function AccessKeyPrompt({ compact = false }: { compact?: boolean
     e.preventDefault()
     if (!value.trim()) return
     setBusy(true); setError(null)
-    const ok = await api.authCheck(value.trim())
+    const res = await api.authCheck(value.trim())
     setBusy(false)
-    if (ok) setKey(value.trim())
-    else setError('That key was not accepted.')
+    if (res.ok) setKey(value.trim())
+    else setError(res.detail ?? 'That key was not accepted.')
   }
   return (
     <form onSubmit={submit} className={`space-y-2 ${compact ? '' : 'p-3 border border-line rounded bg-panel'}`}>
