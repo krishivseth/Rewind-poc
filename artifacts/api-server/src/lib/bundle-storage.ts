@@ -1,5 +1,7 @@
 import { Storage } from "@google-cloud/storage";
 import { createReadStream, createWriteStream } from "node:fs";
+import { copyFile, mkdir } from "node:fs/promises";
+import path from "node:path";
 import { pipeline } from "node:stream/promises";
 
 const REPLIT_SIDECAR_ENDPOINT = "http://127.0.0.1:1106";
@@ -39,6 +41,15 @@ function locationFromObjectKey(objectKey: string) {
 
 export async function uploadBundle(localPath: string, branchId: string, commitHash: string, signal?: AbortSignal) {
   const relativePath = `rewind/bundles/${branchId}/${commitHash}.bundle`;
+  const localRoot = process.env["REWIND_LOCAL_BUNDLE_DIR"];
+  if (localRoot) {
+    signal?.throwIfAborted();
+    const destination = path.join(localRoot, relativePath);
+    await mkdir(path.dirname(destination), { recursive: true });
+    await copyFile(localPath, destination);
+    signal?.throwIfAborted();
+    return `/objects/${relativePath}`;
+  }
   const { bucketName, objectName } = privateLocation(relativePath);
   const destination = storage.bucket(bucketName).file(objectName);
   await pipeline(createReadStream(localPath), destination.createWriteStream({
@@ -53,6 +64,14 @@ export async function uploadBundle(localPath: string, branchId: string, commitHa
 }
 
 export async function downloadBundle(objectKey: string, destination: string, signal?: AbortSignal) {
+  const localRoot = process.env["REWIND_LOCAL_BUNDLE_DIR"];
+  if (localRoot) {
+    if (!objectKey.startsWith("/objects/")) throw new Error("Invalid bundle object key.");
+    signal?.throwIfAborted();
+    await copyFile(path.join(localRoot, objectKey.slice("/objects/".length)), destination);
+    signal?.throwIfAborted();
+    return;
+  }
   const { bucketName, objectName } = locationFromObjectKey(objectKey);
   await pipeline(
     storage.bucket(bucketName).file(objectName).createReadStream(),
@@ -62,6 +81,13 @@ export async function downloadBundle(objectKey: string, destination: string, sig
 }
 
 export async function deleteBundle(objectKey: string) {
+  const localRoot = process.env["REWIND_LOCAL_BUNDLE_DIR"];
+  if (localRoot) {
+    const { rm } = await import("node:fs/promises");
+    if (!objectKey.startsWith("/objects/")) throw new Error("Invalid bundle object key.");
+    await rm(path.join(localRoot, objectKey.slice("/objects/".length)), { force: true });
+    return;
+  }
   const { bucketName, objectName } = locationFromObjectKey(objectKey);
   await storage.bucket(bucketName).file(objectName).delete({ ignoreNotFound: true });
 }

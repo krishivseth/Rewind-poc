@@ -14,6 +14,7 @@ import { branches, db, repos, sessions, steps } from "@workspace/db";
 import { runCodingAgent } from "../lib/openrouter";
 import { runBundleCleanup, sessionExpiry } from "../lib/run-bundles";
 import { logger } from "../lib/logger";
+import { checkpointAtStep, checkpointFromStep } from "../lib/exact-fork";
 
 const router: IRouter = Router();
 const subscribers = new Map<string, Set<Response>>();
@@ -99,20 +100,6 @@ async function ownedBranch(branchId: string, userId: string) {
       gte(sessions.expiresAt, new Date()),
     ));
   return row?.branch ?? null;
-}
-
-function checkpointFromStep(step: typeof steps.$inferSelect) {
-  const content = step.content;
-  if (
-    step.commitHash &&
-    typeof content === "object" &&
-    content !== null &&
-    "bundleKey" in content &&
-    typeof content.bundleKey === "string"
-  ) {
-    return { commitHash: step.commitHash, bundleKey: content.bundleKey };
-  }
-  return null;
 }
 
 async function resolveBranchBase(branch: typeof branches.$inferSelect) {
@@ -611,7 +598,7 @@ router.post("/branches/:id/fork", async (req, res) => {
     .from(steps)
     .where(and(eq(steps.branchId, parent.id), lte(steps.stepIndex, body.stepIndex)))
     .orderBy(desc(steps.stepIndex));
-  if (!checkpointRows.some((step) => checkpointFromStep(step))) {
+  if (!checkpointAtStep(checkpointRows, body.stepIndex)) {
     res.status(409).json({ error: "The selected step cannot be reconstructed exactly because it has no durable checkpoint." });
     return;
   }
@@ -638,7 +625,7 @@ router.post("/branches/:id/fork", async (req, res) => {
       .from(steps)
       .where(and(eq(steps.branchId, lockedParent.id), lte(steps.stepIndex, body.stepIndex)))
       .orderBy(desc(steps.stepIndex));
-    if (!lockedCheckpoints.some((step) => checkpointFromStep(step))) return null;
+    if (!checkpointAtStep(lockedCheckpoints, body.stepIndex)) return null;
 
     let targetSessionId = lockedParent.sessionId;
     if (lockedSession.userId === null) {
