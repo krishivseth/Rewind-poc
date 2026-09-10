@@ -29,7 +29,9 @@ export const settings = {
   openrouterApiKey: process.env.OPENROUTER_API_KEY ?? "",
   openrouterBaseUrl: process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1",
   accessKey: process.env.REWIND_ACCESS_KEY ?? "",
-  dataDir: resolveFromRoot(process.env.DATA_DIR ?? "./data"),
+  // Replit's repo filesystem is not a safe place for runtime data in a deployment; bundles go to App
+  // Storage there (PRIVATE_OBJECT_DIR) and scratch data to /tmp.
+  dataDir: resolveFromRoot(process.env.DATA_DIR ?? (process.env.REPL_ID ? "/tmp/rewind/data" : "./data")),
   branchesRoot: process.env.BRANCHES_ROOT ?? "/tmp/rewind/branches",
   restoreRoot: process.env.RESTORE_ROOT ?? "/tmp/rewind/restores",
   seedReposDir: process.env.SEED_REPOS_DIR ?? path.join(repoRoot, "seed_repos"),
