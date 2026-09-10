@@ -2,3 +2,4 @@
 - [Exact fork reconstruction](exact-fork-reconstruction.md) — fork only from a durable checkpoint; reject incomplete legacy state instead of approximating it.
 - [Snapshot retention locking](snapshot-retention-locking.md) — session retirement and cross-session forks share a lock; object deletion always follows a fresh reference check.
 - [Interrupted Git operations](interrupted-git-operations.md) — workflow restarts can retain temporary Git locks; retries must not assume a clean temporary filesystem.
+- [ESM integration-test bundles](esm-integration-test-bundles.md) — externalize CommonJS-heavy runtime packages and ensure pnpm can resolve them from generated test output.

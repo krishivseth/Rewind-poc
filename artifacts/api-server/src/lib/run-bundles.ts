@@ -24,7 +24,7 @@ async function referencedBundleKeys(keys: string[]) {
   return new Set([...branchRows, ...stepRows].map((row) => row.bundleKey).filter(Boolean));
 }
 
-async function retireEligibleSessions(now: Date) {
+export async function retireEligibleSessions(now: Date) {
   const candidates = await db
     .select({ id: sessions.id })
     .from(sessions)
@@ -96,7 +96,7 @@ async function retireEligibleSessions(now: Date) {
   }
 }
 
-async function reconcileAbandonedRuns(now: Date) {
+export async function reconcileAbandonedRuns(now: Date) {
   await db
     .update(branches)
     .set({ status: "failed", finishedAt: now, leaseExpiresAt: null })
@@ -106,7 +106,7 @@ async function reconcileAbandonedRuns(now: Date) {
     ));
 }
 
-async function drainBundleCleanupQueue(now: Date) {
+export async function drainBundleCleanupQueue(now: Date) {
   const retryBefore = new Date(now.getTime() - RETRY_DELAY_MS);
   const queued = await db
     .select()
