@@ -1,8 +1,78 @@
 import { db, branches, repos, sessions, steps } from "@workspace/db";
+import { and, eq, isNull } from "drizzle-orm";
+import { createAgentWorktree } from "./worktree";
+
+async function ensureDemoSnapshots() {
+  const [demo] = await db
+    .select({ branch: branches, repo: repos })
+    .from(branches)
+    .innerJoin(sessions, eq(branches.sessionId, sessions.id))
+    .innerJoin(repos, eq(sessions.repoId, repos.id))
+    .where(and(
+      isNull(sessions.userId),
+      eq(sessions.title, "Make all tests pass"),
+      eq(repos.slug, "csv-stats"),
+    ))
+    .limit(1);
+  if (!demo) return;
+  const [initialStep] = await db
+    .select({ content: steps.content })
+    .from(steps)
+    .where(and(eq(steps.branchId, demo.branch.id), eq(steps.stepIndex, 0)));
+  if (
+    typeof initialStep?.content === "object" &&
+    initialStep.content !== null &&
+    "bundleKey" in initialStep.content &&
+    typeof initialStep.content.bundleKey === "string"
+  ) return;
+
+  const worktree = await createAgentWorktree(demo.repo.slug, demo.branch.id);
+  try {
+    const initial = await worktree.checkpoint("Seed demo initial state");
+    await worktree.execute("edit_file", {
+      path: "csv_stats.py",
+      old_string: "return len(rows) - 1",
+      new_string: "return len(rows)",
+    });
+    const edited = await worktree.checkpoint("Seed demo edited state");
+    await db.transaction(async (tx) => {
+      await tx
+        .update(steps)
+        .set({
+          commitHash: initial.commitHash,
+          content: { role: "user", content: "Make all tests pass", bundleKey: initial.bundleKey },
+        })
+        .where(and(eq(steps.branchId, demo.branch.id), eq(steps.stepIndex, 0)));
+      await tx
+        .update(steps)
+        .set({
+          commitHash: edited.commitHash,
+          content: { path: "csv_stats.py", content: "def row_count(rows):\n    return len(rows)\n", bundleKey: edited.bundleKey },
+        })
+        .where(and(eq(steps.branchId, demo.branch.id), eq(steps.stepIndex, 6)));
+      await tx
+        .update(steps)
+        .set({
+          commitHash: edited.commitHash,
+          content: { name: "run", arguments: { command: "test" }, bundleKey: edited.bundleKey },
+        })
+        .where(and(eq(steps.branchId, demo.branch.id), eq(steps.stepIndex, 7)));
+      await tx
+        .update(branches)
+        .set({ bundleKey: edited.bundleKey })
+        .where(eq(branches.id, demo.branch.id));
+    });
+  } finally {
+    await worktree.cleanup();
+  }
+}
 
 export async function ensureRewindSeedData() {
   const existing = await db.select({ id: repos.id }).from(repos).limit(1);
-  if (existing.length > 0) return;
+  if (existing.length > 0) {
+    await ensureDemoSnapshots();
+    return;
+  }
 
   const seedRepos = await db
     .insert(repos)
@@ -138,4 +208,5 @@ export async function ensureRewindSeedData() {
       latencyMs: 642,
     },
   ]);
+  await ensureDemoSnapshots();
 }

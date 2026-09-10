@@ -153,6 +153,7 @@ export async function createAgentWorktree(
 
   const checkpoint = async (label: string): Promise<WorktreeCheckpoint> => {
     signal?.throwIfAborted();
+    const previousCommit = (await git(root, ["rev-parse", "HEAD"], signal)).trim();
     const status = await git(root, ["status", "--porcelain=v1", "-z"], signal);
     const changed = status.split("\0").filter(Boolean).map((entry) => entry.slice(3));
     if (changed.length) {
@@ -167,6 +168,12 @@ export async function createAgentWorktree(
       const bundleKey = await uploadBundle(localBundle, branchId, commitHash, signal);
       signal?.throwIfAborted();
       return { changed, commitHash, bundleKey };
+    } catch (error) {
+      if (changed.length) {
+        await git(root, ["reset", "--hard", previousCommit]).catch(() => undefined);
+        await git(root, ["clean", "-fd"]).catch(() => undefined);
+      }
+      throw error;
     } finally {
       await rm(localBundle, { force: true });
     }
@@ -212,13 +219,17 @@ export async function createAgentWorktree(
         const command = files.includes("package.json")
           ? ["npm", ["test"]] as const
           : ["python", ["-m", "unittest", "discover", "-v"]] as const;
+        let output: string;
         try {
-          return { output: truncate(await runFile(root, command[0], command[1], signal, 90_000)), filesChanged: [] };
+          output = truncate(await runFile(root, command[0], command[1], signal, 90_000));
         } catch (error) {
           if (signal?.aborted) throw error;
           const failure = error as { stdout?: string; stderr?: string; message?: string };
-          return { output: truncate(`${failure.stdout ?? ""}${failure.stderr ?? ""}` || failure.message || "Tests failed."), filesChanged: [] };
+          output = truncate(`${failure.stdout ?? ""}${failure.stderr ?? ""}` || failure.message || "Tests failed.");
         }
+        const status = await git(root, ["status", "--porcelain=v1", "-z"], signal);
+        const filesChanged = status.split("\0").filter(Boolean).map((entry) => entry.slice(3));
+        return { output, filesChanged };
       }
       if (name === "git_diff") {
         return { output: truncate(await git(root, ["diff", "--no-ext-diff", "HEAD"], signal)), filesChanged: [] };
