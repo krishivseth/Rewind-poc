@@ -4,3 +4,4 @@
 - [Upload lease clocks](upload-lease-clocks.md) — upload ownership and orphan reclamation must use one database clock, not API server wall time.
 - [Interrupted Git operations](interrupted-git-operations.md) — workflow restarts can retain temporary Git locks; retries must not assume a clean temporary filesystem.
 - [ESM integration-test bundles](esm-integration-test-bundles.md) — externalize CommonJS-heavy runtime packages and ensure pnpm can resolve them from generated test output.
+- [Clerk route-test identities](clerk-route-test-identities.md) — simulated Clerk contexts must match the installed SDK, while the application auth guard remains real.
