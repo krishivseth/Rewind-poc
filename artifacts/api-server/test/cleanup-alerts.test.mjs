@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   CLEANUP_QUEUE_AGE_ALERT_SECONDS as threshold,
+  PENDING_NOTIFICATION_GRACE_MS,
   createCleanupMonitor,
   createMemoryCleanupAlertStateStore,
 } from "./.generated/cleanup-alerts.mjs";
@@ -156,6 +157,80 @@ test("concurrent monitors sharing persisted state announce a transition once", a
   await Promise.all([f.check(), replica()]);
   assert.equal(f.events.length, 2);
   assert.equal(f.events[1].event, "snapshot_cleanup_recovered");
+});
+
+test("a crash between committing a transition and sending it does not lose the alert", async () => {
+  let clock = 1_000_000_000;
+  const store = createMemoryCleanupAlertStateStore(undefined, { now: () => clock });
+  let health = {
+    pendingCount: 1,
+    retryBackoffCount: 0,
+    persistentFailureCount: 1,
+    persistentFailureThreshold: 3,
+    oldestQueuedAgeSeconds: 600,
+  };
+  const events = [];
+  let crashing = false;
+  const makeCheck = () => createCleanupMonitor(async () => health, {
+    warn: (fields, message) => {
+      // The process dies after the state commit, before the log line lands.
+      if (crashing) throw new Error("process died");
+      events.push({ level: "warn", ...fields, message });
+    },
+    info: (fields, message) => events.push({ level: "info", ...fields, message }),
+  }, store);
+
+  crashing = true;
+  await assert.rejects(makeCheck()());
+  assert.equal(events.length, 0);
+
+  // A restart within the grace period stays quiet: the entry may still be
+  // mid-delivery by a live committer, so it must not be duplicated.
+  crashing = false;
+  const restarted = makeCheck();
+  await restarted();
+  assert.equal(events.length, 0);
+
+  // Once the grace period passes with no delivery, the committed-but-unsent
+  // alert is re-announced exactly once.
+  clock += PENDING_NOTIFICATION_GRACE_MS + 1;
+  await restarted();
+  assert.equal(events.length, 1);
+  assert.equal(events[0].event, "snapshot_cleanup_alert");
+  await restarted();
+  assert.equal(events.length, 1);
+
+  // Recovery after the crash is still announced exactly once.
+  health = { ...health, pendingCount: 0, persistentFailureCount: 0, oldestQueuedAgeSeconds: null };
+  await restarted();
+  assert.equal(events.length, 2);
+  assert.equal(events[1].event, "snapshot_cleanup_recovered");
+});
+
+test("a failed delivery acknowledgement re-emits the alert instead of losing it", async () => {
+  // Zero grace: an unacknowledged entry is re-deliverable on the next check.
+  const inner = createMemoryCleanupAlertStateStore(undefined, { gracePeriodMs: 0 });
+  let ackFails = true;
+  const store = {
+    transact: (update) => inner.transact(update),
+    markDelivered: async (ids) => {
+      if (ackFails) throw new Error("connection reset");
+      return inner.markDelivered(ids);
+    },
+  };
+  const f = fixture(store);
+  f.set({ pendingCount: 1, persistentFailureCount: 1, oldestQueuedAgeSeconds: 600 });
+  await f.check();
+  assert.equal(f.events.length, 1);
+
+  // The acknowledgement was lost, so the alert is re-emitted (a duplicate log
+  // line) rather than never delivered.
+  ackFails = false;
+  await f.makeCheck()();
+  assert.equal(f.events.length, 2);
+  assert.equal(f.events[1].event, "snapshot_cleanup_alert");
+  await f.check();
+  assert.equal(f.events.length, 2);
 });
 
 test("an unreachable state store warns once per process and never leaks errors", async () => {

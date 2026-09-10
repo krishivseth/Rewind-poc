@@ -39,20 +39,48 @@ export interface CleanupAlertTransition<T> {
   out: T;
 }
 
-export interface CleanupAlertStateStore {
-  // Runs update with exclusive ownership of the persisted state (a row lock in
-  // the database implementation) and commits the returned state atomically.
-  // Concurrent monitors serialize here, so only the instance that commits a
-  // changed state sees a transition to announce.
-  transact: <T>(
-    update: (state: CleanupAlertState) => CleanupAlertTransition<T> | Promise<CleanupAlertTransition<T>>,
-  ) => Promise<T>;
-}
-
 interface MonitorNotification {
   level: "warn" | "info";
   fields: object;
   message: string;
+}
+
+// A notification persisted alongside the incident state so a crash between
+// committing the transition and emitting the log line cannot lose the alert.
+// enqueuedAt uses the database clock in the database-backed store; id is
+// unique per enqueued notification so deliveries can be acknowledged
+// individually.
+export interface PendingNotification extends MonitorNotification {
+  id: string;
+  enqueuedAt: string;
+}
+
+// A committed-but-undelivered notification younger than this is assumed to be
+// mid-delivery by the process that committed it; older ones mean that process
+// died and any live monitor must re-emit them. Kept well below the hourly
+// monitor interval so a lost alert is re-announced on the next health check.
+export const PENDING_NOTIFICATION_GRACE_MS = 5 * 60 * 1000;
+
+export interface CleanupAlertStateStore {
+  // Runs update with exclusive ownership of the persisted state (a row lock in
+  // the database implementation), commits the returned state, and appends the
+  // returned notifications to the persisted outbox — atomically, so a
+  // notification can never be committed without being recoverable. Resolves
+  // with every notification ready for delivery: the ones just committed plus
+  // any persisted ones whose delivery grace period expired (their committing
+  // process crashed between commit and send). Fresh persisted entries belong
+  // to a live committer and are left alone, so concurrent instances still
+  // announce an unchanged incident exactly once.
+  transact: (
+    update: (
+      state: CleanupAlertState,
+    ) => CleanupAlertTransition<{ notifications: MonitorNotification[] }>
+      | Promise<CleanupAlertTransition<{ notifications: MonitorNotification[] }>>,
+  ) => Promise<PendingNotification[]>;
+  // Acknowledges emitted notifications, removing them from the persisted
+  // outbox by id. If this fails (or the process crashes first), the entries
+  // survive and a later check re-emits them: at-least-once, never lost.
+  markDelivered: (ids: string[]) => Promise<void>;
 }
 
 // In-memory store: preserves pre-persistence behavior for tests and as a
@@ -62,19 +90,37 @@ interface MonitorNotification {
 // store.
 export function createMemoryCleanupAlertStateStore(
   initial: CleanupAlertState = EMPTY_CLEANUP_ALERT_STATE,
+  options: { gracePeriodMs?: number; now?: () => number } = {},
 ): CleanupAlertStateStore {
+  const gracePeriodMs = options.gracePeriodMs ?? PENDING_NOTIFICATION_GRACE_MS;
+  const now = options.now ?? Date.now;
   let state = initial;
+  let pending: PendingNotification[] = [];
+  let nextId = 0;
   let queue: Promise<unknown> = Promise.resolve();
+  const enqueue = <T>(fn: () => Promise<T>): Promise<T> => {
+    const run = queue.then(fn);
+    queue = run.catch(() => {});
+    return run;
+  };
   return {
-    transact: (update) => {
-      const run = queue.then(async () => {
-        const { next, out } = await update(state);
-        state = next;
-        return out;
-      });
-      queue = run.catch(() => {});
-      return run;
-    },
+    transact: (update) => enqueue(async () => {
+      const { next, out } = await update(state);
+      state = next;
+      const enqueuedAt = new Date(now()).toISOString();
+      const fresh: PendingNotification[] = out.notifications.map((notification) => ({
+        ...notification,
+        id: `mem-${++nextId}`,
+        enqueuedAt,
+      }));
+      const cutoff = now() - gracePeriodMs;
+      const stale = pending.filter((entry) => Date.parse(entry.enqueuedAt) <= cutoff);
+      pending = [...pending, ...fresh];
+      return [...stale, ...fresh];
+    }),
+    markDelivered: (ids) => enqueue(async () => {
+      pending = pending.filter((entry) => !ids.includes(entry.id));
+    }),
   };
 }
 
@@ -171,11 +217,11 @@ export function createCleanupMonitor(
       health = null;
     }
 
-    let notifications: MonitorNotification[];
+    let deliverable: PendingNotification[];
     try {
-      ({ notifications } = await store.transact(
+      deliverable = await store.transact(
         (persisted) => computeTransition(persisted, health),
-      ));
+      );
       storeUnreachable = false;
     } catch {
       if (!storeUnreachable) {
@@ -188,11 +234,22 @@ export function createCleanupMonitor(
       return;
     }
 
-    for (const notification of notifications) {
+    // Emit everything the store released for delivery: notifications committed
+    // by this check plus any a crashed process never sent. A crash from here
+    // until markDelivered is safe — the entries stay in the outbox and a later
+    // check re-emits them (a duplicate log line, never a lost alert).
+    for (const notification of deliverable) {
       if (notification.level === "warn") {
         sink.warn(notification.fields, notification.message);
       } else {
         sink.info(notification.fields, notification.message);
+      }
+    }
+    if (deliverable.length > 0) {
+      try {
+        await store.markDelivered(deliverable.map((notification) => notification.id));
+      } catch {
+        // Left in the outbox; a later health check re-delivers them.
       }
     }
   };

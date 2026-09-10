@@ -86,11 +86,18 @@ export const steps = pgTable("steps", {
 // deduplication lives here (not per-process memory) so API restarts and
 // multiple instances do not re-announce an unchanged incident. Transitions are
 // claimed under a row lock; only the instance that commits a changed state
-// announces it.
+// announces it. pendingNotifications is an outbox of committed-but-not-yet-
+// delivered notifications, so a crash between the state commit and the log
+// emission cannot lose an alert; entries are removed once delivered and
+// re-emitted by any instance if their committing process dies first.
 export const cleanupMonitorState = pgTable("cleanup_monitor_state", {
   id: text("id").primaryKey(),
   activeReasons: jsonb("active_reasons").$type<string[]>().notNull().default([]),
   healthUnavailable: boolean("health_unavailable").notNull().default(false),
+  pendingNotifications: jsonb("pending_notifications")
+    .$type<{ id: string; enqueuedAt: string; level: string; fields: object; message: string }[]>()
+    .notNull()
+    .default([]),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
