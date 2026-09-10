@@ -1,8 +1,0 @@
-- [OpenAPI parameter naming](orval-param-name-collision.md) — mixed path/query operations can collide in generated Zod and TypeScript exports.
-- [Exact fork reconstruction](exact-fork-reconstruction.md) — fork only from a durable checkpoint; reject incomplete legacy state instead of approximating it.
-- [Snapshot retention locking](snapshot-retention-locking.md) — session retirement and cross-session forks share a lock; object deletion always follows a fresh reference check.
-- [Cleanup alert state persistence](cleanup-alert-state-persistence.md) — incident state lives in a DB row claimed under a lock; announce only committed transitions, never from in-memory comparisons.
-- [Upload lease clocks](upload-lease-clocks.md) — upload ownership and orphan reclamation must use one database clock, not API server wall time.
-- [Interrupted Git operations](interrupted-git-operations.md) — workflow restarts can retain temporary Git locks; retries must not assume a clean temporary filesystem.
-- [ESM integration-test bundles](esm-integration-test-bundles.md) — externalize CommonJS-heavy runtime packages and ensure pnpm can resolve them from generated test output.
-- [Clerk route-test identities](clerk-route-test-identities.md) — simulated Clerk contexts must match the installed SDK, while the application auth guard remains real.

@@ -1,258 +1,122 @@
-import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+/** Scratch worktrees under BRANCHES_ROOT, bundles in storage, and a TTL cache of restored repos. */
+import { cp, mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
-import { downloadBundle, uploadBundle } from "./bundle-storage";
+import { settings } from "./config";
+import * as git from "./gitwrap";
+import * as storage from "./storage";
 
-const execFileAsync = promisify(execFile);
-const baseRoot = path.join(tmpdir(), "rewind-base-repos");
-const worktreeRoot = path.join(tmpdir(), "rewind-worktrees");
-const bundleRoot = path.join(tmpdir(), "rewind-bundles");
-const repoLocks = new Map<string, Promise<string>>();
+export const branchDir = (branchId: string) => path.join(settings.branchesRoot, branchId);
+export const repoBundleKey = (slug: string) => `repos/${slug}.bundle`;
+export const branchBundleKey = (branchId: string) => `bundles/${branchId}.bundle`;
 
-const fixtures: Record<string, Record<string, string>> = {
-  "csv-stats": {
-    "csv_stats.py": `def row_count(rows):\n    return len(rows) - 1\n\n\ndef average(values):\n    if not values:\n        return 0\n    return sum(values) / len(values)\n`,
-    "test_csv_stats.py": `import unittest\nfrom csv_stats import average, row_count\n\n\nclass CsvStatsTests(unittest.TestCase):\n    def test_row_count_uses_data_rows(self):\n        self.assertEqual(row_count([[\"a\"], [\"b\"]]), 2)\n\n    def test_average_empty(self):\n        self.assertEqual(average([]), 0)\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n`,
-    "README.md": "# csv-stats\n\nSmall helpers used by a CSV statistics CLI.\n",
-  },
-  "tiny-todo": {
-    "todo.py": `def add_todo(items, title):\n    title = title.strip()\n    if not title:\n        raise ValueError(\"title is required\")\n    return [*items, {\"title\": title, \"done\": False}]\n\n\ndef complete_todo(items, index):\n    updated = list(items)\n    updated[index] = {**updated[index], \"done\": True}\n    return updated\n`,
-    "test_todo.py": `import unittest\nfrom todo import add_todo, complete_todo\n\n\nclass TodoTests(unittest.TestCase):\n    def test_add(self):\n        self.assertEqual(add_todo([], \"Ship\"), [{\"title\": \"Ship\", \"done\": False}])\n\n    def test_complete(self):\n        self.assertTrue(complete_todo([{\"title\": \"Ship\", \"done\": False}], 0)[0][\"done\"])\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n`,
-    "README.md": "# tiny-todo\n\nA small todo domain module with unit tests.\n",
-  },
-  "rate-limiter": {
-    "rate-limiter.js": `export class TokenBucket {\n  constructor(capacity) {\n    this.capacity = capacity;\n    this.tokens = capacity;\n  }\n\n  take(count = 1) {\n    if (this.tokens < count) return false;\n    this.tokens -= count;\n    return true;\n  }\n}\n`,
-    "rate-limiter.test.js": `import test from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { TokenBucket } from \"./rate-limiter.js\";\n\ntest(\"does not exceed capacity\", () => {\n  const bucket = new TokenBucket(2);\n  assert.equal(bucket.take(), true);\n  assert.equal(bucket.take(), true);\n  assert.equal(bucket.take(), false);\n});\n`,
-    "package.json": `{\"type\":\"module\",\"scripts\":{\"test\":\"node --test\"}}\n`,
-    "README.md": "# rate-limiter\n\nA minimal token bucket implementation.\n",
-  },
-};
-
-async function runFile(cwd: string, file: string, args: readonly string[], signal?: AbortSignal, timeout = 60_000) {
-  signal?.throwIfAborted();
-  const result = await execFileAsync(file, [...args], { cwd, timeout, maxBuffer: 2_000_000, signal });
-  signal?.throwIfAborted();
-  return `${result.stdout}${result.stderr}`;
+async function withTmp<T>(prefix: string, fn: (dir: string) => Promise<T>): Promise<T> {
+  const dir = await mkdtemp(path.join(os.tmpdir(), prefix));
+  try { return await fn(dir); } finally { await rm(dir, { recursive: true, force: true }); }
 }
 
-function git(cwd: string, args: readonly string[], signal?: AbortSignal, timeout?: number) {
-  return runFile(cwd, "git", args, signal, timeout);
+/** Turn a seed directory into a one-commit bundle stored under repos/{slug}.bundle. */
+export async function createRepoBundle(slug: string, sourceDir: string): Promise<string> {
+  return withTmp("rewind-seed-", async (tmp) => {
+    const work = path.join(tmp, "repo");
+    await cp(sourceDir, work, { recursive: true, filter: (src) => !/(^|\/)(__pycache__|\.pytest_cache|\.git)(\/|$)/.test(src) });
+    await git.init(work);
+    await git.commitAll(work, "base");
+    const bundle = path.join(tmp, "repo.bundle");
+    await git.bundleCreate(work, bundle);
+    return storage.putFile(repoBundleKey(slug), bundle);
+  });
 }
 
-async function ensureBareRepository(slug: string) {
-  const existing = repoLocks.get(slug);
-  if (existing) return existing;
-  const pending = (async () => {
-    await mkdir(baseRoot, { recursive: true });
-    const barePath = path.join(baseRoot, `${slug}.git`);
-    try {
-      await stat(barePath);
-      return barePath;
-    } catch {
-      // Create the seed repository below.
-    }
-    const seedPath = await mkdtemp(path.join(tmpdir(), `rewind-seed-${slug}-`));
-    await git(seedPath, ["init", "-b", "main"]);
-    await git(seedPath, ["config", "user.email", "rewind@local"]);
-    await git(seedPath, ["config", "user.name", "Rewind Agent"]);
-    for (const [filePath, content] of Object.entries(fixtures[slug] ?? fixtures["tiny-todo"])) {
-      const target = path.join(seedPath, filePath);
-      await mkdir(path.dirname(target), { recursive: true });
-      await writeFile(target, content, "utf8");
-    }
-    await git(seedPath, ["add", "-A"]);
-    await git(seedPath, ["commit", "-m", "Seed repository"]);
-    await git(seedPath, ["clone", "--bare", ".", barePath]);
-    await rm(seedPath, { recursive: true, force: true });
-    return barePath;
-  })();
-  repoLocks.set(slug, pending);
-  return pending;
+export async function restoreBundle(key: string, dest: string): Promise<string> {
+  await mkdir(path.dirname(dest), { recursive: true });
+  await withTmp("rewind-bundle-", async (tmp) => {
+    const local = await storage.getToFile(key, path.join(tmp, "b.bundle"));
+    await git.cloneBundle(local, dest, path.dirname(dest));
+  });
+  return dest;
 }
 
-function safePath(root: string, requested: string) {
-  const resolved = path.resolve(root, requested);
-  if (!resolved.startsWith(`${root}${path.sep}`) || requested.includes(".git")) {
-    throw new Error("Path is outside the worktree.");
+/** Root branches clone the repo bundle; forks clone the parent's bundle (or live worktree) then reset to startCommit. */
+export async function prepareBranchWorktree(branchId: string, baseBundleKey: string, parentBundleKey: string | null, parentBranchId: string | null, startCommit: string | null): Promise<string> {
+  const dest = branchDir(branchId);
+  await rm(dest, { recursive: true, force: true });
+  await mkdir(path.dirname(dest), { recursive: true });
+  if (parentBundleKey && (await storage.exists(parentBundleKey))) await restoreBundle(parentBundleKey, dest);
+  else if (parentBranchId && existsSync(branchDir(parentBranchId))) await git.cloneLocal(branchDir(parentBranchId), dest, path.dirname(dest));
+  else await restoreBundle(baseBundleKey, dest);
+  if (startCommit) {
+    if (!(await git.commitExists(dest, startCommit))) throw new Error(`start commit ${startCommit} not found in restored history`);
+    await git.resetHard(dest, startCommit);
   }
-  return resolved;
+  return dest;
 }
 
-function truncate(value: string, max = 30_000) {
-  const trimmed = value.trim();
-  return trimmed.length > max ? `${trimmed.slice(0, max)}\n…output truncated…` : trimmed;
+/** Bundle the worktree's full history into storage and delete the worktree. */
+export async function finalizeBranch(branchId: string): Promise<string | null> {
+  const wt = branchDir(branchId);
+  if (!existsSync(wt)) return null;
+  const key = branchBundleKey(branchId);
+  await withTmp("rewind-final-", async (tmp) => {
+    const bundle = path.join(tmp, "b.bundle");
+    await git.bundleCreate(wt, bundle);
+    await storage.putFile(key, bundle);
+  });
+  await rm(wt, { recursive: true, force: true });
+  return key;
 }
 
-export type AgentToolName = "list_files" | "read_file" | "write_file" | "edit_file" | "run_tests" | "git_diff";
-export type WorktreeCheckpoint = {
-  changed: string[];
-  commitHash: string;
-  bundleKey: string;
-};
-export type WorktreeBase = { bundleKey: string; commitHash: string };
-export type AgentToolResult = {
-  output: string;
-  filesChanged: string[];
-  snapshot?: { path: string; content: string };
-  checkpoint?: WorktreeCheckpoint;
-};
+// --- restore cache -------------------------------------------------------------------------
 
-export async function createAgentWorktree(
-  slug: string,
-  branchId: string,
-  options: {
-    signal?: AbortSignal;
-    base?: WorktreeBase | null;
-  } = {},
-) {
-  const { signal, base } = options;
-  await Promise.all([
-    mkdir(worktreeRoot, { recursive: true }),
-    mkdir(bundleRoot, { recursive: true }),
-  ]);
+const restored = new Map<string, { dir: string; at: number }>();
+const locks = new Map<string, Promise<string>>();
 
-  const cleanupPaths: string[] = [];
-  let barePath: string;
-  let startCommit = "HEAD";
-  if (base) {
-    const restoreDirectory = await mkdtemp(path.join(bundleRoot, "restore-"));
-    const localBundle = path.join(restoreDirectory, "base.bundle");
-    barePath = path.join(restoreDirectory, "base.git");
-    try {
-      await downloadBundle(base.bundleKey, localBundle, signal);
-      signal?.throwIfAborted();
-      await git(tmpdir(), ["clone", "--bare", localBundle, barePath], signal);
-      await git(tmpdir(), ["--git-dir", barePath, "cat-file", "-e", `${base.commitHash}^{commit}`], signal);
-    } catch (error) {
-      await rm(restoreDirectory, { recursive: true, force: true });
-      throw error;
-    }
-    startCommit = base.commitHash;
-    cleanupPaths.push(restoreDirectory);
-  } else {
-    barePath = await ensureBareRepository(slug);
+/** Read-only clone of a finished branch's bundle, cached; a running branch returns its live worktree (git objects only). */
+export async function restoredRepo(branchId: string, bundleKey: string | null): Promise<string> {
+  if (!bundleKey) {
+    const live = branchDir(branchId);
+    if (existsSync(live)) return live;
+    throw new Error("branch has no bundle and no live worktree");
   }
+  const hit = restored.get(branchId);
+  if (hit && existsSync(hit.dir)) { hit.at = Date.now(); return hit.dir; }
+  const pending = locks.get(branchId);
+  if (pending) return pending;
+  const p = (async () => {
+    const dest = path.join(settings.restoreRoot, branchId);
+    await rm(dest, { recursive: true, force: true });
+    await restoreBundle(bundleKey, dest);
+    restored.set(branchId, { dir: dest, at: Date.now() });
+    return dest;
+  })().finally(() => locks.delete(branchId));
+  locks.set(branchId, p);
+  return p;
+}
 
-  let root: string;
-  try {
-    root = await mkdtemp(path.join(worktreeRoot, `${branchId.slice(0, 8)}-`));
-  } catch (error) {
-    await Promise.all(cleanupPaths.map((cleanupPath) => rm(cleanupPath, { recursive: true, force: true })));
-    throw error;
+export async function evictStaleRestores(): Promise<number> {
+  let n = 0;
+  for (const [id, { dir, at }] of [...restored]) {
+    if (Date.now() - at > settings.restoreCacheSeconds * 1000) { await rm(dir, { recursive: true, force: true }); restored.delete(id); n += 1; }
   }
-  try {
-    await git(tmpdir(), ["--git-dir", barePath, "worktree", "add", "--detach", root, startCommit], signal);
-    await git(root, ["config", "user.email", "rewind@local"], signal);
-    await git(root, ["config", "user.name", "Rewind Agent"], signal);
-  } catch (error) {
-    await git(tmpdir(), ["--git-dir", barePath, "worktree", "remove", "--force", root]).catch(() => undefined);
-    await Promise.all([
-      rm(root, { recursive: true, force: true }),
-      ...cleanupPaths.map((cleanupPath) => rm(cleanupPath, { recursive: true, force: true })),
-    ]);
-    throw error;
-  }
+  return n;
+}
 
-  const checkpoint = async (label: string): Promise<WorktreeCheckpoint> => {
-    signal?.throwIfAborted();
-    const previousCommit = (await git(root, ["rev-parse", "HEAD"], signal)).trim();
-    const status = await git(root, ["status", "--porcelain=v1", "-z"], signal);
-    const changed = status.split("\0").filter(Boolean).map((entry) => entry.slice(3));
-    if (changed.length) {
-      await git(root, ["add", "-A"], signal);
-      await git(root, ["commit", "-m", label], signal);
-    }
-    const commitHash = (await git(root, ["rev-parse", "HEAD"], signal)).trim();
-    let bundleDirectory: string | undefined;
-    try {
-      // Git can leave a .lock behind after interruption. Never reuse another
-      // attempt's directory, even for the same branch and commit.
-      bundleDirectory = await mkdtemp(path.join(bundleRoot, "checkpoint-"));
-      const localBundle = path.join(bundleDirectory, "snapshot.bundle");
-      await git(root, ["bundle", "create", localBundle, "HEAD"], signal);
-      signal?.throwIfAborted();
-      const bundleKey = await uploadBundle(localBundle, branchId, commitHash, signal);
-      signal?.throwIfAborted();
-      return { changed, commitHash, bundleKey };
-    } catch (error) {
-      if (changed.length) {
-        await git(root, ["reset", "--hard", previousCommit]).catch(() => undefined);
-        await git(root, ["clean", "-fd"]).catch(() => undefined);
-      }
-      throw error;
-    } finally {
-      if (bundleDirectory) await rm(bundleDirectory, { recursive: true, force: true });
-    }
-  };
+export async function sweepRestores(): Promise<number> {
+  restored.clear();
+  if (!existsSync(settings.restoreRoot)) return 0;
+  const entries = await readdir(settings.restoreRoot);
+  await Promise.all(entries.map((e) => rm(path.join(settings.restoreRoot, e), { recursive: true, force: true })));
+  return entries.length;
+}
 
-  return {
-    root,
-    checkpoint,
-    async execute(name: AgentToolName, args: Record<string, unknown>): Promise<AgentToolResult> {
-      signal?.throwIfAborted();
-      if (name === "list_files") {
-        return { output: truncate(await git(root, ["ls-files"], signal)), filesChanged: [] };
-      }
-      if (name === "read_file") {
-        const requested = String(args.path ?? "");
-        const content = await readFile(safePath(root, requested), "utf8");
-        return { output: truncate(content), filesChanged: [], snapshot: { path: requested, content } };
-      }
-      if (name === "write_file") {
-        const requested = String(args.path ?? "");
-        const content = String(args.content ?? "");
-        if (!requested || content.length > 100_000) throw new Error("Invalid file write.");
-        const target = safePath(root, requested);
-        await mkdir(path.dirname(target), { recursive: true });
-        await writeFile(target, content, "utf8");
-        signal?.throwIfAborted();
-        return { output: `Wrote ${requested}`, filesChanged: [requested], snapshot: { path: requested, content } };
-      }
-      if (name === "edit_file") {
-        const requested = String(args.path ?? "");
-        const oldString = String(args.old_string ?? "");
-        const newString = String(args.new_string ?? "");
-        const target = safePath(root, requested);
-        const current = await readFile(target, "utf8");
-        if (!oldString || !current.includes(oldString)) throw new Error("old_string was not found.");
-        const content = current.replace(oldString, newString);
-        await writeFile(target, content, "utf8");
-        signal?.throwIfAborted();
-        return { output: `Edited ${requested}`, filesChanged: [requested], snapshot: { path: requested, content } };
-      }
-      if (name === "run_tests") {
-        const files = await git(root, ["ls-files"], signal);
-        const command = files.includes("package.json")
-          ? ["npm", ["test"]] as const
-          : ["python", ["-m", "unittest", "discover", "-v"]] as const;
-        let output: string;
-        try {
-          output = truncate(await runFile(root, command[0], command[1], signal, 90_000));
-        } catch (error) {
-          if (signal?.aborted) throw error;
-          const failure = error as { stdout?: string; stderr?: string; message?: string };
-          output = truncate(`${failure.stdout ?? ""}${failure.stderr ?? ""}` || failure.message || "Tests failed.");
-        }
-        const status = await git(root, ["status", "--porcelain=v1", "-z"], signal);
-        const filesChanged = status.split("\0").filter(Boolean).map((entry) => entry.slice(3));
-        return { output, filesChanged };
-      }
-      if (name === "git_diff") {
-        return { output: truncate(await git(root, ["diff", "--no-ext-diff", "HEAD"], signal)), filesChanged: [] };
-      }
-      throw new Error(`Unsupported tool: ${name}`);
-    },
-    async finalize() {
-      return checkpoint(`Rewind agent run ${branchId.slice(0, 8)}`);
-    },
-    async cleanup() {
-      await git(tmpdir(), ["--git-dir", barePath, "worktree", "remove", "--force", root]).catch(() => undefined);
-      await Promise.all([
-        rm(root, { recursive: true, force: true }),
-        ...cleanupPaths.map((cleanupPath) => rm(cleanupPath, { recursive: true, force: true })),
-      ]);
-    },
-  };
+export async function forgetBranch(branchId: string): Promise<void> {
+  await rm(branchDir(branchId), { recursive: true, force: true });
+  const hit = restored.get(branchId);
+  if (hit) { await rm(hit.dir, { recursive: true, force: true }); restored.delete(branchId); }
+}
+
+export async function clearRestoreCache(): Promise<void> {
+  for (const { dir } of restored.values()) await rm(dir, { recursive: true, force: true });
+  restored.clear();
 }

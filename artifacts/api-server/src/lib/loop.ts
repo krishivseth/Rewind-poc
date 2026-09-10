@@ -1,0 +1,188 @@
+/** The agent loop. One function, runBranch, executed as a background task per branch. */
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { branches, db, repos, sessions, steps, type Branch, type Step } from "@workspace/db";
+import { getClient, type ModelClient } from "./client";
+import { estimateCostUsd, settings } from "./config";
+import * as git from "./gitwrap";
+import { logger } from "./logger";
+import { messagesFromSteps, type ToolCall } from "./messages";
+import { publish } from "./pubsub";
+import * as tools from "./tools";
+import * as worktree from "./worktree";
+
+const cancelled = new Set<string>();
+export const requestCancel = (id: string) => { cancelled.add(id); };
+export const isCancelRequested = (id: string) => cancelled.has(id);
+
+class BranchStop extends Error {
+  constructor(public status: "failed" | "cancelled", public reason: string) { super(reason); }
+}
+
+export function branchView(b: Branch, queuePosition: number | null = null): Record<string, unknown> {
+  return {
+    id: b.id, session_id: b.sessionId, parent_branch_id: b.parentBranchId, fork_step_index: b.forkStepIndex,
+    model_id: b.modelId, task_prompt: b.taskPrompt, status: b.status, error: b.error, step_count: b.stepCount,
+    total_input_tokens: b.totalInputTokens, total_output_tokens: b.totalOutputTokens, bundle_key: b.bundleKey,
+    created_at: b.createdAt.toISOString(), finished_at: b.finishedAt?.toISOString() ?? null,
+    ...(queuePosition !== null ? { queue_position: queuePosition } : {}),
+  };
+}
+
+export function stepView(s: Step): Record<string, unknown> {
+  return {
+    id: s.id, branch_id: s.branchId, index: s.stepIndex, kind: s.kind, content: s.content, tool_name: s.toolName,
+    tool_args: s.toolArgs, tool_result: s.toolResult, commit_hash: s.commitHash, files_changed: s.filesChanged ?? [],
+    input_tokens: s.inputTokens, output_tokens: s.outputTokens, latency_ms: s.latencyMs, note: s.note,
+    created_at: s.createdAt.toISOString(),
+  };
+}
+
+async function setStatus(branchId: string, status: Branch["status"], opts: { error?: string | null; finished?: boolean; bundleKey?: string | null } = {}): Promise<Branch> {
+  const patch: Partial<Branch> = { status };
+  if (opts.error !== undefined) patch.error = opts.error;
+  if (opts.finished) { patch.finishedAt = new Date(); patch.leaseExpiresAt = null; }
+  else patch.leaseExpiresAt = new Date(Date.now() + settings.leaseSeconds * 1000);
+  if (opts.bundleKey) patch.bundleKey = opts.bundleKey;
+  const [row] = await db.update(branches).set(patch).where(eq(branches.id, branchId)).returning();
+  publish(branchId, { type: "status", data: branchView(row!) });
+  return row!;
+}
+
+async function recordStep(branchId: string, fields: Omit<typeof steps.$inferInsert, "branchId" | "stepIndex">): Promise<Step> {
+  return db.transaction(async (tx) => {
+    const [b] = await tx.select().from(branches).where(eq(branches.id, branchId)).for("update");
+    const [row] = await tx.insert(steps).values({ ...fields, branchId, stepIndex: b!.stepCount }).returning();
+    await tx.update(branches).set({
+      stepCount: b!.stepCount + 1,
+      totalInputTokens: sql`${branches.totalInputTokens} + ${fields.inputTokens ?? 0}`,
+      totalOutputTokens: sql`${branches.totalOutputTokens} + ${fields.outputTokens ?? 0}`,
+    }).where(eq(branches.id, branchId));
+    publish(branchId, { type: "step", data: stepView(row!) });
+    return row!;
+  });
+}
+
+const shortArgs = (name: string, args: Record<string, unknown>) => String(name === "run" ? args.command ?? "" : args.path ?? "").slice(0, 80);
+
+export async function runBranch(branchId: string, client?: ModelClient): Promise<void> {
+  const model = client ?? getClient();
+  const started = Date.now();
+  let wt: string | null = null;
+  let finalStatus: "done" | "failed" | "cancelled" = "failed";
+  let finalError: string | null = null;
+  let heartbeat: NodeJS.Timeout | null = null;
+
+  try {
+    const [branch] = await db.select().from(branches).where(eq(branches.id, branchId));
+    if (!branch) throw new Error("branch not found");
+    const [sess] = await db.select().from(sessions).where(eq(sessions.id, branch.sessionId));
+    const [repo] = await db.select().from(repos).where(eq(repos.id, sess!.repoId));
+    if (!repo?.bundleKey) throw new Error("repo has no bundle");
+    const parent = branch.parentBranchId ? (await db.select().from(branches).where(eq(branches.id, branch.parentBranchId)))[0] ?? null : null;
+    let existing = await db.select().from(steps).where(eq(steps.branchId, branchId)).orderBy(asc(steps.stepIndex));
+
+    if (cancelled.has(branchId)) throw new BranchStop("cancelled", "cancelled before start");
+    await setStatus(branchId, "running");
+    heartbeat = setInterval(() => {
+      db.update(branches).set({ leaseExpiresAt: new Date(Date.now() + settings.leaseSeconds * 1000) })
+        .where(and(eq(branches.id, branchId), inArray(branches.status, ["running"]))).catch(() => undefined);
+    }, Math.max(10_000, (settings.leaseSeconds * 1000) / 3));
+
+    const startCommit = [...existing].reverse().find((s) => s.commitHash)?.commitHash ?? null;
+    wt = await worktree.prepareBranchWorktree(branchId, repo.bundleKey, parent?.bundleKey ?? null, parent?.id ?? null, startCommit);
+
+    if (!existing.length) {
+      await recordStep(branchId, { kind: "user", content: { role: "user", content: branch.taskPrompt } });
+      existing = await db.select().from(steps).where(eq(steps.branchId, branchId)).orderBy(asc(steps.stepIndex));
+    }
+
+    const messages = messagesFromSteps(branch.systemPrompt, existing);
+    let turns = 0;
+    let totalTokens = branch.totalInputTokens + branch.totalOutputTokens;
+    let repeats: string[] = [];
+
+    const checkLimits = (phase: string) => {
+      if (cancelled.has(branchId)) throw new BranchStop("cancelled", `cancelled before ${phase}`);
+      if (Date.now() - started > settings.wallClockSecondsPerBranch * 1000) throw new BranchStop("failed", `wall clock limit ${settings.wallClockSecondsPerBranch}s hit`);
+      if (totalTokens >= settings.maxTotalTokensPerBranch) throw new BranchStop("failed", `token limit ${settings.maxTotalTokensPerBranch} hit`);
+    };
+
+    for (;;) {
+      checkLimits("model call");
+      if (turns >= settings.maxModelCalls) throw new BranchStop("failed", `max steps ${settings.maxModelCalls} hit`);
+      const t0 = Date.now();
+      const completion = await model.complete(branch.modelId, messages, tools.TOOL_SCHEMAS as unknown as unknown[], settings.maxOutputTokensPerCall);
+      turns += 1;
+      totalTokens += completion.inputTokens + completion.outputTokens;
+      const assistant = completion.message as Record<string, unknown>;
+      await recordStep(branchId, { kind: "assistant", content: assistant, inputTokens: completion.inputTokens, outputTokens: completion.outputTokens, latencyMs: Date.now() - t0 });
+      messages.push(assistant);
+      const toolCalls = (assistant.tool_calls as ToolCall[] | undefined) ?? [];
+      if (!toolCalls.length) { finalStatus = "done"; break; }
+
+      for (const tc of toolCalls) {
+        checkLimits("tool call");
+        const name = tc.function.name;
+        let args: Record<string, unknown> = {};
+        let parseError: string | null = null;
+        try {
+          const parsed: unknown = JSON.parse(tc.function.arguments || "{}");
+          if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("arguments must be an object");
+          args = parsed as Record<string, unknown>;
+        } catch (e) { args = { _raw: tc.function.arguments }; parseError = `error: could not parse tool arguments: ${(e as Error).message}`; }
+        await recordStep(branchId, { kind: "tool_call", content: tc as unknown as Record<string, unknown>, toolName: name, toolArgs: args });
+
+        const t1 = Date.now();
+        const outcome = parseError ? { output: parseError, ok: false, mutates: false } : await tools.execute(wt, name, args);
+        let commitHash: string | null = null;
+        let filesChanged: string[] = [];
+        const mutated = (tools.MUTATING_TOOLS.has(name) && outcome.ok) || (outcome.mutates && (await git.isDirty(wt)));
+        if (mutated) {
+          const [b] = await db.select({ n: branches.stepCount }).from(branches).where(eq(branches.id, branchId));
+          commitHash = await git.commitAll(wt, `step ${b!.n}: ${name} ${shortArgs(name, args)}`);
+          filesChanged = await git.filesChangedIn(wt, commitHash);
+        }
+
+        // same tool, same arguments, back to back: warn, then fail
+        const sig = JSON.stringify([name, args]);
+        repeats = repeats.length && repeats[repeats.length - 1] === sig ? [...repeats, sig] : [sig];
+        let output = outcome.output;
+        const record = (o: string) => recordStep(branchId, {
+          kind: "tool_result", content: { role: "tool", tool_call_id: tc.id, content: o }, toolName: name, toolArgs: args,
+          toolResult: o, commitHash, filesChanged, latencyMs: Date.now() - t1,
+        });
+        if (repeats.length >= settings.loopFailAfter) {
+          await record(output);
+          throw new BranchStop("failed", `stuck in a loop: ${name} was called with the same arguments ${repeats.length} times in a row`);
+        }
+        if (repeats.length >= settings.loopWarnAfter) {
+          output += `\n\n[rewind] You have made this exact call ${repeats.length} times in a row. Repeating it again will end the run. Do something different: read a file you have not read, make an edit, or finish with a summary.`;
+        }
+        await record(output);
+        messages.push({ role: "tool", tool_call_id: tc.id, content: output });
+      }
+    }
+  } catch (e) {
+    if (e instanceof BranchStop) { finalStatus = e.status; finalError = e.reason; }
+    else { logger.error({ err: e, branchId }, "branch crashed"); finalStatus = "failed"; finalError = `${(e as Error).name}: ${(e as Error).message}`; }
+  }
+
+  if (heartbeat) clearInterval(heartbeat);
+  let bundleKey: string | null = null;
+  try {
+    if (wt) {
+      if (await git.isDirty(wt)) await git.commitAll(wt, `final: ${finalStatus}`, false);
+      bundleKey = await worktree.finalizeBranch(branchId);
+    }
+  } catch (e) {
+    logger.error({ err: e, branchId }, "finalize failed");
+    finalError = `${finalError ?? ""} (finalize failed: ${(e as Error).message})`;
+  }
+  const row = await setStatus(branchId, finalStatus, { error: finalError, finished: true, bundleKey });
+  cancelled.delete(branchId);
+  logger.info({
+    branchId, status: finalStatus, model: row.modelId, steps: row.stepCount, tokensIn: row.totalInputTokens, tokensOut: row.totalOutputTokens,
+    estCostUsd: Number(estimateCostUsd(row.modelId, row.totalInputTokens, row.totalOutputTokens).toFixed(4)),
+    elapsedS: Number(((Date.now() - started) / 1000).toFixed(1)), reason: finalError ?? undefined,
+  }, "branch finished");
+}

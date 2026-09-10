@@ -2,7 +2,9 @@ modules = ["nodejs-24", "postgresql-16", "python-base-3.12"]
 
 [deployment]
 router = "application"
-deploymentTarget = "autoscale"
+deploymentTarget = "vm"
+# Reserved VM, not autoscale: agent branches run for minutes inside the API process and must not be
+# killed between requests or scaled to zero.
 
 [deployment.postBuild]
 args = ["pnpm", "store", "prune"]

@@ -47,3 +47,8 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Rewind
+data/
+.env
+artifacts/api-server/test/.generated/
