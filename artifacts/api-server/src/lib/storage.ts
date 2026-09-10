@@ -9,9 +9,15 @@ import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { settings } from "./config";
 
+// Keys written by the previous version of this app look like /objects/rewind/bundles/...; they map
+// to the same bucket location that code used, so old branches stay viewable and deletable.
+const LEGACY = "/objects/";
+const normalize = (key: string) => (key.startsWith(LEGACY) ? key.slice(LEGACY.length) : key);
+
 function localPath(key: string): string {
-  if (key.startsWith("/") || key.split("/").includes("..")) throw new Error(`bad storage key: ${key}`);
-  return path.join(settings.dataDir, "storage", key);
+  const k = normalize(key);
+  if (k.startsWith("/") || k.split("/").includes("..")) throw new Error(`bad storage key: ${key}`);
+  return path.join(settings.dataDir, "storage", k);
 }
 
 const objectDir = process.env.PRIVATE_OBJECT_DIR;
@@ -41,7 +47,8 @@ async function bucket() {
   return bucketPromise;
 }
 
-const objectName = (prefix: string, key: string) => [prefix, "rewind", key].filter(Boolean).join("/");
+const objectName = (prefix: string, key: string) =>
+  (key.startsWith(LEGACY) ? [prefix, normalize(key)] : [prefix, "rewind", key]).filter(Boolean).join("/");
 
 export async function putFile(key: string, src: string): Promise<string> {
   if (objectDir) {
