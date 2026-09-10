@@ -4,6 +4,7 @@ import { deleteBundle } from "./bundle-storage";
 import { reconcileBundleUploads } from "./bundle-upload-intents";
 import { logger, operatorLogger } from "./logger";
 import { createCleanupMonitor } from "./cleanup-alerts";
+import { createCleanupAlertStateStore } from "./cleanup-alert-store";
 
 export const SESSION_RETENTION_DAYS = 30;
 const CLEANUP_BATCH_SIZE = 25;
@@ -177,7 +178,11 @@ export async function getBundleCleanupStatus(now = new Date()) {
 }
 
 let cleanupPromise: Promise<void> | null = null;
-const checkCleanupHealth = createCleanupMonitor(getBundleCleanupStatus, operatorLogger);
+const checkCleanupHealth = createCleanupMonitor(
+  getBundleCleanupStatus,
+  operatorLogger,
+  createCleanupAlertStateStore(),
+);
 
 export function runBundleCleanup(now = new Date()) {
   if (cleanupPromise) return cleanupPromise;

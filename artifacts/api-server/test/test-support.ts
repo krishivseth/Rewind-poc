@@ -16,9 +16,18 @@ export {
   runBundleCleanup,
 } from "../src/lib/run-bundles";
 export {
+  createCleanupMonitor,
+  createMemoryCleanupAlertStateStore,
+} from "../src/lib/cleanup-alerts";
+export {
+  CLEANUP_MONITOR_ID,
+  createCleanupAlertStateStore,
+} from "../src/lib/cleanup-alert-store";
+export {
   branches,
   bundleCleanupQueue,
   bundleUploadIntents,
+  cleanupMonitorState,
   db,
   pool,
   repos,

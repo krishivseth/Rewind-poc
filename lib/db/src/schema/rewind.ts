@@ -1,4 +1,5 @@
 import {
+  boolean,
   index,
   integer,
   jsonb,
@@ -79,6 +80,18 @@ export const steps = pgTable("steps", {
   outputTokens: integer("output_tokens"),
   latencyMs: integer("latency_ms"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Single-row-per-monitor incident state for cleanup alerting. Alert delivery
+// deduplication lives here (not per-process memory) so API restarts and
+// multiple instances do not re-announce an unchanged incident. Transitions are
+// claimed under a row lock; only the instance that commits a changed state
+// announces it.
+export const cleanupMonitorState = pgTable("cleanup_monitor_state", {
+  id: text("id").primaryKey(),
+  activeReasons: jsonb("active_reasons").$type<string[]>().notNull().default([]),
+  healthUnavailable: boolean("health_unavailable").notNull().default(false),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const bundleCleanupQueue = pgTable("bundle_cleanup_queue", {

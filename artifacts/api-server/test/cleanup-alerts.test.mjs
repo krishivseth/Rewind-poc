@@ -3,9 +3,10 @@ import test from "node:test";
 import {
   CLEANUP_QUEUE_AGE_ALERT_SECONDS as threshold,
   createCleanupMonitor,
+  createMemoryCleanupAlertStateStore,
 } from "./.generated/cleanup-alerts.mjs";
 
-function fixture() {
+function fixture(store = createMemoryCleanupAlertStateStore()) {
   let health = {
     pendingCount: 0,
     retryBackoffCount: 0,
@@ -14,15 +15,16 @@ function fixture() {
     oldestQueuedAgeSeconds: null,
   };
   const events = [];
-  const check = createCleanupMonitor(async () => {
+  const makeCheck = () => createCleanupMonitor(async () => {
     if (health instanceof Error) throw health;
     return health;
   }, {
     warn: (fields, message) => events.push({ level: "warn", ...fields, message }),
     info: (fields, message) => events.push({ level: "info", ...fields, message }),
-  });
+  }, store);
   return {
-    check,
+    check: makeCheck(),
+    makeCheck,
     events,
     set: (patch) => { health = { ...health, ...patch }; },
     fail: () => { health = new Error("Private /objects/secret-key"); },
@@ -105,6 +107,68 @@ test("notifications allowlist aggregate fields, dropping private keys and raw er
     oldestQueuedAgeSeconds: 1234,
     queueAgeThresholdSeconds: threshold,
   });
+});
+
+test("a restarted monitor does not re-announce an unchanged incident", async () => {
+  const store = createMemoryCleanupAlertStateStore();
+  const f = fixture(store);
+  f.set({ pendingCount: 1, persistentFailureCount: 1, oldestQueuedAgeSeconds: 600 });
+  await f.check();
+  assert.equal(f.events.length, 1);
+  assert.equal(f.events[0].event, "snapshot_cleanup_alert");
+
+  // Simulate a restart (or a second instance): a fresh monitor sharing the
+  // persisted state. The ongoing incident must not be announced again.
+  const restarted = f.makeCheck();
+  await restarted();
+  await restarted();
+  assert.equal(f.events.length, 1);
+
+  // Recovery is still announced exactly once, by whichever instance sees it.
+  f.set({ pendingCount: 0, persistentFailureCount: 0, oldestQueuedAgeSeconds: null });
+  await restarted();
+  assert.equal(f.events.length, 2);
+  assert.equal(f.events[1].event, "snapshot_cleanup_recovered");
+  await f.check();
+  assert.equal(f.events.length, 2);
+
+  // A new incident after the restart re-arms alerting.
+  f.set({ pendingCount: 1, persistentFailureCount: 2 });
+  await restarted();
+  assert.equal(f.events.length, 3);
+  assert.equal(f.events[2].event, "snapshot_cleanup_alert");
+  assert.equal(f.events[2].persistentFailureCount, 2);
+});
+
+test("concurrent monitors sharing persisted state announce a transition once", async () => {
+  const store = createMemoryCleanupAlertStateStore();
+  const f = fixture(store);
+  const replica = f.makeCheck();
+  f.set({ pendingCount: 2, persistentFailureCount: 1, oldestQueuedAgeSeconds: 900 });
+  for (let i = 0; i < 5; i++) {
+    await Promise.all([f.check(), replica()]);
+  }
+  assert.equal(f.events.length, 1);
+  assert.equal(f.events[0].event, "snapshot_cleanup_alert");
+
+  f.set({ pendingCount: 0, persistentFailureCount: 0, oldestQueuedAgeSeconds: null });
+  await Promise.all([f.check(), replica()]);
+  await Promise.all([f.check(), replica()]);
+  assert.equal(f.events.length, 2);
+  assert.equal(f.events[1].event, "snapshot_cleanup_recovered");
+});
+
+test("an unreachable state store warns once per process and never leaks errors", async () => {
+  const privateKey = "/objects/secret-key";
+  const failingStore = {
+    transact: async () => { throw new Error(`connection reset by ${privateKey}`); },
+  };
+  const f = fixture(failingStore);
+  await f.check();
+  await f.check();
+  assert.equal(f.events.length, 1);
+  assert.equal(f.events[0].event, "snapshot_cleanup_monitor_state_unavailable");
+  assert.ok(!JSON.stringify(f.events).includes("secret-key"));
 });
 
 test("unreadable health deduplicates, preserves incident state, and never leaks errors", async () => {
