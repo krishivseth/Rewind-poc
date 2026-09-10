@@ -1,3 +1,4 @@
+import "./env";
 /**
  * Create the three seed sessions through the HTTP API. Spends real tokens (about a cent).
  *

@@ -115,3 +115,10 @@ Choices the spec left open, and what this codebase does about them.
     and the compare table. The compare table offers "Fork here" at the divergence step.
 40. **Legacy bundle keys** from the first version (`/objects/rewind/bundles/...`) resolve to their
     old bucket path so those branches can still be opened and deleted.
+41. **Three run modes, one code path.** `pnpm dev` runs API and Vite together (`scripts/dev.mjs`,
+    no extra dependency); `pnpm build && pnpm start` serves everything from the API process; the
+    Dockerfile does the same in a container; Replit runs the two artifacts through its path router.
+    `.env` at the repo root is loaded by a module imported first in the API entrypoint, using
+    Node's built-in loader, so local runs need no dotenv package and deployments need no `.env`.
+42. **Root build skips the mockup sandbox.** It is Replit agent scaffolding with its own type
+    errors and no part of the product; `pnpm build` typechecks and builds only the API and the UI.

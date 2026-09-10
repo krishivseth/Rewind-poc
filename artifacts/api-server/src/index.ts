@@ -1,3 +1,4 @@
+import "./env";
 import { mkdir } from "node:fs/promises";
 import app from "./app";
 import { settings } from "./lib/config";
