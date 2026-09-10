@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import { ClerkProvider, RedirectToSignIn, Show, SignIn, SignUp, UserButton, useAuth, useClerk } from '@clerk/react';
+import { ClerkProvider, Show, SignIn, SignUp, UserButton, useAuth, useClerk } from '@clerk/react';
 import { publishableKeyFromHost } from '@clerk/react/internal';
 import { shadcn } from '@clerk/themes';
 import {
@@ -270,6 +270,7 @@ function Workspace() {
   const [showFork, setShowFork] = useState(false);
   const [showDiff, setShowDiff] = useState(false);
   const [fileFilter, setFileFilter] = useState('');
+  const [liveState, setLiveState] = useState<'connecting' | 'live' | 'offline'>('connecting');
 
   useEffect(() => {
     if (branches.length && !branches.some((branch) => branch.id === selectedBranchId)) setSelectedBranchId(branches[0].id);
@@ -295,6 +296,26 @@ function Workspace() {
   const diffQuery = useGetDiff(diffParams, { query: { enabled: Boolean(showDiff && compareBranch && selectedStep), queryKey: getGetDiffQueryKey(diffParams) } });
   const forkBranch = useForkBranch();
 
+  useEffect(() => {
+    if (!selectedBranchId) return;
+    setLiveState('connecting');
+    const source = new EventSource(`/api/branches/${selectedBranchId}/events`);
+    source.onopen = () => setLiveState('live');
+    source.onerror = () => setLiveState('offline');
+    source.onmessage = (event) => {
+      const payload = JSON.parse(event.data) as { type?: string; step?: any };
+      if (payload.step) {
+        queryClient.setQueryData(getListBranchStepsQueryKey(selectedBranchId), (current: any) => {
+          const rows = Array.isArray(current) ? current : [];
+          return rows.some((row: any) => row.id === payload.step.id) ? rows : [...rows, payload.step].sort((a, b) => a.index - b.index);
+        });
+      }
+      queryClient.invalidateQueries({ queryKey: getGetSessionQueryKey(id) });
+      queryClient.invalidateQueries({ queryKey: getListBranchStepsQueryKey(selectedBranchId) });
+    };
+    return () => source.close();
+  }, [id, selectedBranchId]);
+
   const selectStep = (index: number) => {
     setSelectedStepIndex(index);
     setSelectedFilePath('');
@@ -310,7 +331,7 @@ function Workspace() {
       <div className="flex min-h-[calc(100dvh-3.5rem)] flex-col">
         <div className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-[#0c1016] px-4 sm:px-6">
           <div className="flex min-w-0 items-center gap-3"><Link href="/" data-testid="link-back-sessions" className="text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4" /></Link><span className="h-4 w-px bg-border" /><span className="truncate font-mono text-xs text-foreground">{session?.title ?? 'Loading session…'}</span>{selectedBranch && <span className="hidden items-center gap-1.5 border border-border px-2 py-1 font-mono text-[10px] text-muted-foreground sm:flex"><GitBranch className="h-3 w-3 text-primary" /> {selectedBranch.id.slice(0, 8)}</span>}</div>
-          <div className="flex items-center gap-2"><button type="button" data-testid="button-toggle-diff" onClick={() => setShowDiff((value) => !value)} className={cx('flex items-center gap-1.5 border px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-wider transition-colors', showDiff ? 'border-primary/60 bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:text-foreground')}><GitCompare className="h-3.5 w-3.5" /> <span className="hidden sm:inline">compare</span></button><button type="button" data-testid="button-fork-header" onClick={() => setShowFork(true)} disabled={!selectedStep} className="flex items-center gap-1.5 border border-primary/40 px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-wider text-primary hover:bg-primary/10 disabled:opacity-40"><Split className="h-3.5 w-3.5" /> fork</button></div>
+          <div className="flex items-center gap-2"><span className="hidden items-center gap-1.5 font-mono text-[9px] uppercase tracking-wider text-muted-foreground sm:flex"><StatusDot status={liveState === 'live' ? 'done' : liveState === 'offline' ? 'failed' : 'queued'} pulse={liveState === 'connecting'} /> {liveState}</span><button type="button" data-testid="button-toggle-diff" onClick={() => setShowDiff((value) => !value)} className={cx('flex items-center gap-1.5 border px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-wider transition-colors', showDiff ? 'border-primary/60 bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:text-foreground')}><GitCompare className="h-3.5 w-3.5" /> <span className="hidden sm:inline">compare</span></button><button type="button" data-testid="button-fork-header" onClick={() => setShowFork(true)} disabled={!selectedStep} className="flex items-center gap-1.5 border border-primary/40 px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-wider text-primary hover:bg-primary/10 disabled:opacity-40"><Split className="h-3.5 w-3.5" /> fork</button></div>
         </div>
         {sessionQuery.isLoading ? <WorkspaceSkeleton /> : sessionQuery.isError ? <div className="m-4"><QueryError onRetry={refetchAll} /></div> : (
           <div className="grid min-h-0 flex-1 lg:grid-cols-[220px_minmax(420px,1fr)_320px]">
@@ -327,7 +348,7 @@ function Workspace() {
           </div>
         )}
       </div>
-      {showFork && <ForkModal branch={selectedBranch} stepIndex={activeIndex} onClose={() => setShowFork(false)} mutation={forkBranch} onSuccess={() => { setShowFork(false); sessionQuery.refetch(); }} />}
+      {showFork && <ForkModal branch={selectedBranch} stepIndex={activeIndex} onClose={() => setShowFork(false)} mutation={forkBranch} onSuccess={(created) => { setShowFork(false); const targetSessionId = created[0]?.sessionId; if (targetSessionId && targetSessionId !== id) setLocation(`/sessions/${targetSessionId}`); else sessionQuery.refetch(); }} />}
     </AppShell>
   );
 }
@@ -384,7 +405,7 @@ function DiffPanel({ query, compareBranch, onClose }: { query: any; compareBranc
   return <section className="border-t border-primary/20 bg-[#0c1517]"><div className="flex items-center justify-between border-b border-border px-4 py-3"><div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-wider text-primary"><GitCompare className="h-3.5 w-3.5" /> branch comparison <span className="text-muted-foreground">vs {compareBranch?.id.slice(0, 8)}</span></div><button type="button" data-testid="button-close-diff" onClick={onClose}><X className="h-4 w-4 text-muted-foreground hover:text-foreground" /></button></div>{query.isLoading ? <div className="p-4 font-mono text-[11px] text-muted-foreground">Calculating patch…</div> : query.isError ? <div className="p-4"><QueryError onRetry={() => query.refetch()} /></div> : !query.data ? <div className="p-4 font-mono text-[11px] text-muted-foreground">A second branch is required to compare trajectory points.</div> : <div className="grid gap-3 p-4 md:grid-cols-[180px_1fr]"><div><p className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">changed files</p><div className="mt-2 space-y-1">{query.data.files.map((file: string) => <div key={file} className="truncate font-mono text-[10px] text-amber-200">{file}</div>)}</div></div><pre className="rewind-scroll max-h-48 overflow-auto border border-border/70 bg-[#090d12] p-3 font-mono text-[10px] leading-5 text-slate-300">{query.data.patch}</pre></div>}</section>;
 }
 
-function ForkModal({ branch, stepIndex, onClose, mutation, onSuccess }: { branch: any; stepIndex: number; onClose: () => void; mutation: any; onSuccess: () => void }) {
+function ForkModal({ branch, stepIndex, onClose, mutation, onSuccess }: { branch: any; stepIndex: number; onClose: () => void; mutation: any; onSuccess: (created: any[]) => void }) {
   const [modelId, setModelId] = useState(branch?.modelId ?? 'anthropic/claude-sonnet-4');
   const [editedTaskPrompt, setEditedTaskPrompt] = useState(branch?.taskPrompt ?? '');
   const [count, setCount] = useState(1);
@@ -434,6 +455,11 @@ function ClerkQueryClientCacheInvalidator() {
   return null;
 }
 
+function ClerkProviderWithRoutes() {
+  const [, setLocation] = useLocation();
+  return <ClerkProvider publishableKey={clerkPubKey} proxyUrl={clerkProxyUrl} appearance={clerkAppearance} signInUrl={`${basePath}/sign-in`} signUpUrl={`${basePath}/sign-up`} localization={{ signIn: { start: { title: 'Welcome back', subtitle: 'Sign in to inspect your agent trajectories' } }, signUp: { start: { title: 'Create your account', subtitle: 'Start debugging coding-agent runs' } } }} routerPush={(to) => setLocation(stripBase(to))} routerReplace={(to) => setLocation(stripBase(to), { replace: true })}><QueryClientProvider client={queryClient}><ClerkQueryClientCacheInvalidator /><TooltipProvider><RoutedErrorBoundary><Router /></RoutedErrorBoundary><Toaster /></TooltipProvider></QueryClientProvider></ClerkProvider>;
+}
+
 function Router() {
   return <Switch><Route path="/" component={HomeRedirect} /><Route path="/sign-in/*?" component={SignInPage} /><Route path="/sign-up/*?" component={SignUpPage} /><Route path="/sessions/:id" component={ProtectedWorkspace} /><Route component={NotFound} /></Switch>;
 }
@@ -445,7 +471,7 @@ function RoutedErrorBoundary({ children }: { children: ReactNode }) {
 
 function App() {
   if (!clerkPubKey) throw new Error('Missing VITE_CLERK_PUBLISHABLE_KEY.');
-  return <WouterRouter base={basePath}><ClerkProvider publishableKey={clerkPubKey} proxyUrl={clerkProxyUrl} appearance={clerkAppearance} signInUrl={`${basePath}/sign-in`} signUpUrl={`${basePath}/sign-up`} routerPush={(to) => window.history.pushState({}, '', to)} routerReplace={(to) => window.history.replaceState({}, '', to)}><QueryClientProvider client={queryClient}><ClerkQueryClientCacheInvalidator /><TooltipProvider><RoutedErrorBoundary><Router /></RoutedErrorBoundary><Toaster /></TooltipProvider></QueryClientProvider></ClerkProvider></WouterRouter>;
+  return <WouterRouter base={basePath}><ClerkProviderWithRoutes /></WouterRouter>;
 }
 
 export default App;

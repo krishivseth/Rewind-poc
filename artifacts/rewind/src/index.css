@@ -1,7 +1,13 @@
+@layer theme, base, clerk, components, utilities;
 @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
 @import 'tailwindcss';
 @import 'tw-animate-css';
 @plugin "@tailwindcss/typography";
+
+.cl-formFieldInput::placeholder {
+  color: #6f7b86;
+  opacity: 1;
+}
 
 @custom-variant dark (&:is(.dark *));
 

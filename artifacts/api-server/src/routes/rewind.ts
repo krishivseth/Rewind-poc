@@ -1,5 +1,5 @@
-import { Router, type IRouter } from "express";
-import { and, asc, desc, eq, lte } from "drizzle-orm";
+import { Router, type IRouter, type Response } from "express";
+import { and, asc, desc, eq, isNull, lte, or } from "drizzle-orm";
 import {
   CreateSessionBody,
   ForkBranchBody,
@@ -11,9 +11,10 @@ import {
   GetStepContextParams,
 } from "@workspace/api-zod";
 import { branches, db, repos, sessions, steps } from "@workspace/db";
-import { generateAgentResponse } from "../lib/openrouter";
+import { runCodingAgent } from "../lib/openrouter";
 
 const router: IRouter = Router();
+const subscribers = new Map<string, Set<Response>>();
 
 const MODELS = [
   { id: "anthropic/claude-sonnet-4", name: "Claude Sonnet", provider: "Anthropic", accent: "#d6a978" },
@@ -61,6 +62,20 @@ function stepView(step: typeof steps.$inferSelect) {
   };
 }
 
+function publishBranchEvent(branchId: string, payload: Record<string, unknown>) {
+  const message = `data: ${JSON.stringify(payload)}\n\n`;
+  subscribers.get(branchId)?.forEach((response) => response.write(message));
+}
+
+async function visibleBranch(branchId: string, userId: string) {
+  const [row] = await db
+    .select({ branch: branches, sessionUserId: sessions.userId })
+    .from(branches)
+    .innerJoin(sessions, eq(branches.sessionId, sessions.id))
+    .where(eq(branches.id, branchId));
+  return row && (row.sessionUserId === null || row.sessionUserId === userId) ? row.branch : null;
+}
+
 async function runBranch(branchId: string) {
   const [branch] = await db.select().from(branches).where(eq(branches.id, branchId));
   if (!branch) return;
@@ -78,55 +93,88 @@ async function runBranch(branchId: string) {
   }
 
   await db.update(branches).set({ status: "running" }).where(eq(branches.id, branchId));
+  publishBranchEvent(branchId, { type: "status", status: "running" });
   const [lastStep] = await db
     .select({ stepIndex: steps.stepIndex })
     .from(steps)
     .where(eq(steps.branchId, branchId))
     .orderBy(desc(steps.stepIndex))
     .limit(1);
-  const userStepIndex = (lastStep?.stepIndex ?? -1) + 1;
+  let nextIndex = (lastStep?.stepIndex ?? -1) + 1;
+  const appendStep = async (values: Omit<typeof steps.$inferInsert, "branchId" | "stepIndex">) => {
+    const [step] = await db.insert(steps).values({ ...values, branchId, stepIndex: nextIndex }).returning();
+    nextIndex += 1;
+    publishBranchEvent(branchId, { type: "step", step: stepView(step) });
+    return step;
+  };
 
-  await db.insert(steps).values({
-    branchId,
-    stepIndex: userStepIndex,
-    kind: "user",
-    content: { role: "user", content: branch.taskPrompt },
-    filesChanged: [],
-  });
+  await appendStep({ kind: "user", content: { role: "user", content: branch.taskPrompt }, filesChanged: [] });
 
   try {
-    const result = await generateAgentResponse({
+    const result = await runCodingAgent({
+      branchId,
       modelId: branch.modelId,
       systemPrompt: branch.systemPrompt,
       taskPrompt: branch.taskPrompt,
       repository: repo,
+      onAssistant: async (content, usage) => {
+        await appendStep({
+          kind: "assistant",
+          content: { role: "assistant", content },
+          filesChanged: [],
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          latencyMs: usage.latencyMs,
+        });
+      },
+      onToolCall: async (call) => {
+        let args: Record<string, unknown> = {};
+        try {
+          args = JSON.parse(call.function.arguments || "{}") as Record<string, unknown>;
+        } catch {
+          args = {};
+        }
+        await appendStep({
+          kind: "tool_call",
+          content: { name: call.function.name, arguments: args },
+          toolName: call.function.name,
+          toolArgs: args,
+          filesChanged: [],
+        });
+      },
+      onToolResult: async (call, toolResult) => {
+        await appendStep({
+          kind: "tool_result",
+          content: toolResult.snapshot ?? { output: toolResult.output },
+          toolName: call.function.name,
+          toolResult: toolResult.output,
+          filesChanged: toolResult.filesChanged,
+        });
+      },
     });
-    const assistantStepIndex = userStepIndex + 1;
-    await db.insert(steps).values({
-      branchId,
-      stepIndex: assistantStepIndex,
-      kind: "assistant",
-      content: { role: "assistant", content: result.content },
-      filesChanged: [],
-      inputTokens: result.inputTokens,
-      outputTokens: result.outputTokens,
-      latencyMs: result.latencyMs,
+    await appendStep({
+      kind: "tool_result",
+      content: { commitHash: result.commitHash, bundleKey: result.bundleKey },
+      toolName: "git_commit",
+      toolResult: result.changed.length ? `Committed ${result.changed.join(", ")}` : "No file changes to commit.",
+      filesChanged: result.changed,
+      commitHash: result.commitHash,
     });
     await db
       .update(branches)
       .set({
         status: "done",
-        stepCount: assistantStepIndex + 1,
-        totalInputTokens: result.inputTokens,
-        totalOutputTokens: result.outputTokens,
+        stepCount: nextIndex,
+        totalInputTokens: result.totalInputTokens,
+        totalOutputTokens: result.totalOutputTokens,
+        bundleKey: result.bundleKey,
         finishedAt: new Date(),
       })
       .where(eq(branches.id, branchId));
+    publishBranchEvent(branchId, { type: "status", status: "done" });
   } catch (error) {
     const message = error instanceof Error ? error.message : "The agent run failed.";
-    await db.insert(steps).values({
-      branchId,
-      stepIndex: userStepIndex + 1,
+    await appendStep({
       kind: "assistant",
       content: { role: "assistant", error: message },
       filesChanged: [],
@@ -135,10 +183,11 @@ async function runBranch(branchId: string) {
       .update(branches)
       .set({
         status: "failed",
-        stepCount: userStepIndex + 2,
+        stepCount: nextIndex,
         finishedAt: new Date(),
       })
       .where(eq(branches.id, branchId));
+    publishBranchEvent(branchId, { type: "status", status: "failed", error: message });
   }
 }
 
@@ -148,7 +197,12 @@ router.get("/repos", async (_req, res) => {
 });
 
 router.get("/sessions", async (_req, res) => {
-  const rows = await db.select().from(sessions).orderBy(desc(sessions.createdAt));
+  const userId = res.locals.userId as string;
+  const rows = await db
+    .select()
+    .from(sessions)
+    .where(or(eq(sessions.userId, userId), isNull(sessions.userId)))
+    .orderBy(desc(sessions.createdAt));
   const result = await Promise.all(
     rows.map(async (session) => {
       const sessionBranches = await db
@@ -169,6 +223,7 @@ router.get("/sessions", async (_req, res) => {
 });
 
 router.post("/sessions", async (req, res) => {
+  const userId = res.locals.userId as string;
   const body = CreateSessionBody.parse(req.body);
   if (!MODELS.some((model) => model.id === body.modelId)) {
     res.status(400).json({ error: "Unsupported model." });
@@ -176,7 +231,7 @@ router.post("/sessions", async (req, res) => {
   }
   const [session] = await db
     .insert(sessions)
-    .values({ repoId: body.repoId, title: body.title })
+    .values({ repoId: body.repoId, title: body.title, userId })
     .returning();
   const [branch] = await db
     .insert(branches)
@@ -198,8 +253,12 @@ router.post("/sessions", async (req, res) => {
 });
 
 router.get("/sessions/:id", async (req, res) => {
+  const userId = res.locals.userId as string;
   const { id } = GetSessionParams.parse(req.params);
-  const [session] = await db.select().from(sessions).where(eq(sessions.id, id));
+  const [session] = await db
+    .select()
+    .from(sessions)
+    .where(and(eq(sessions.id, id), or(eq(sessions.userId, userId), isNull(sessions.userId))));
   if (!session) {
     res.status(404).json({ error: "Session not found" });
     return;
@@ -219,24 +278,71 @@ router.get("/sessions/:id", async (req, res) => {
 });
 
 router.get("/branches/:id/steps", async (req, res) => {
+  const userId = res.locals.userId as string;
   const { id } = ListBranchStepsParams.parse(req.params);
+  if (!(await visibleBranch(id, userId))) {
+    res.status(404).json({ error: "Branch not found" });
+    return;
+  }
   const rows = await db.select().from(steps).where(eq(steps.branchId, id)).orderBy(asc(steps.stepIndex));
   res.json(rows.map(stepView));
 });
 
+router.get("/branches/:id/events", async (req, res) => {
+  const userId = res.locals.userId as string;
+  const { id } = req.params;
+  if (!(await visibleBranch(id, userId))) {
+    res.status(404).json({ error: "Branch not found" });
+    return;
+  }
+  res.set({
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  res.flushHeaders();
+  res.write(`data: ${JSON.stringify({ type: "ready" })}\n\n`);
+  const listeners = subscribers.get(id) ?? new Set<Response>();
+  listeners.add(res);
+  subscribers.set(id, listeners);
+  const keepAlive = setInterval(() => res.write(": keep-alive\n\n"), 15_000);
+  req.on("close", () => {
+    clearInterval(keepAlive);
+    listeners.delete(res);
+    if (!listeners.size) subscribers.delete(id);
+  });
+});
+
 router.get("/branches/:id/steps/:index/files", async (req, res) => {
+  const userId = res.locals.userId as string;
   const { id, index } = ListStepFilesParams.parse(req.params);
+  if (!(await visibleBranch(id, userId))) {
+    res.status(404).json({ error: "Branch not found" });
+    return;
+  }
   const rows = await db
     .select()
     .from(steps)
     .where(and(eq(steps.branchId, id), lte(steps.stepIndex, index)))
     .orderBy(asc(steps.stepIndex));
-  const files = [...new Set(rows.flatMap((row) => row.filesChanged ?? []))];
+  const files = [...new Set(rows.flatMap((row) => {
+    const content = row.content;
+    const snapshotPath = typeof content === "object" && content !== null && "path" in content && typeof content.path === "string"
+      ? [content.path]
+      : [];
+    return [...(row.filesChanged ?? []), ...snapshotPath];
+  }))];
   res.json(files.map((path) => ({ path, changed: true, size: 0 })));
 });
 
 router.get("/step-file", async (req, res) => {
+  const userId = res.locals.userId as string;
   const params = ReadFileAtStepQueryParams.parse(req.query);
+  if (!(await visibleBranch(params.branchId, userId))) {
+    res.status(404).json({ error: "Branch not found" });
+    return;
+  }
   const rows = await db
     .select()
     .from(steps)
@@ -245,7 +351,6 @@ router.get("/step-file", async (req, res) => {
   const snapshot = rows.find((row) => {
     const value = row.content;
     return (
-      row.filesChanged?.includes(params.path) &&
       typeof value === "object" &&
       value !== null &&
       "path" in value &&
@@ -262,7 +367,12 @@ router.get("/step-file", async (req, res) => {
 });
 
 router.get("/branches/:id/steps/:index/context", async (req, res) => {
+  const userId = res.locals.userId as string;
   const { id, index } = GetStepContextParams.parse(req.params);
+  if (!(await visibleBranch(id, userId))) {
+    res.status(404).json({ error: "Branch not found" });
+    return;
+  }
   const [row] = await db
     .select()
     .from(steps)
@@ -273,9 +383,10 @@ router.get("/branches/:id/steps/:index/context", async (req, res) => {
 });
 
 router.post("/branches/:id/fork", async (req, res) => {
+  const userId = res.locals.userId as string;
   const { id } = req.params;
   const body = ForkBranchBody.parse(req.body);
-  const [parent] = await db.select().from(branches).where(eq(branches.id, id));
+  const parent = await visibleBranch(id, userId);
   if (!parent) {
     res.status(404).json({ error: "Branch not found" });
     return;
@@ -284,12 +395,27 @@ router.post("/branches/:id/fork", async (req, res) => {
     res.status(400).json({ error: "Unsupported model." });
     return;
   }
+  const [parentSession] = await db.select().from(sessions).where(eq(sessions.id, parent.sessionId));
+  if (!parentSession) {
+    res.status(404).json({ error: "Session not found" });
+    return;
+  }
+  let targetSessionId = parent.sessionId;
+  let parentBranchId: string | null = parent.id;
+  if (parentSession.userId === null) {
+    const [privateSession] = await db
+      .insert(sessions)
+      .values({ userId, repoId: parentSession.repoId, title: `${parentSession.title} / fork` })
+      .returning();
+    targetSessionId = privateSession.id;
+    parentBranchId = null;
+  }
   const created = await db
     .insert(branches)
     .values(
       Array.from({ length: body.count ?? 1 }, () => ({
-        sessionId: parent.sessionId,
-        parentBranchId: parent.id,
+        sessionId: targetSessionId,
+        parentBranchId,
         forkStepIndex: body.stepIndex,
         modelId: body.modelId,
         taskPrompt: body.editedTaskPrompt ?? parent.taskPrompt,
