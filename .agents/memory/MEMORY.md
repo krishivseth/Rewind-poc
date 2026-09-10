@@ -1,1 +1,2 @@
 - [OpenAPI parameter naming](orval-param-name-collision.md) — mixed path/query operations can collide in generated Zod and TypeScript exports.
+- [Exact fork reconstruction](exact-fork-reconstruction.md) — fork only from a durable checkpoint; reject incomplete legacy state instead of approximating it.

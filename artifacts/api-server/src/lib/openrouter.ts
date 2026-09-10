@@ -1,4 +1,4 @@
-import { createAgentWorktree, type AgentToolName, type AgentToolResult } from "./worktree";
+import { createAgentWorktree, type AgentToolName, type AgentToolResult, type WorktreeBase, type WorktreeCheckpoint } from "./worktree";
 
 type ToolCall = {
   id: string;
@@ -29,7 +29,7 @@ const tools = [
   { type: "function", function: { name: "git_diff", description: "Inspect the current uncommitted git diff.", parameters: { type: "object", properties: {} } } },
 ] as const;
 
-async function complete(modelId: string, messages: ModelMessage[]) {
+async function complete(modelId: string, messages: ModelMessage[], signal?: AbortSignal) {
   const apiKey = process.env["OPENROUTER_API_KEY"];
   if (!apiKey) throw new Error("OpenRouter is not configured. Add OPENROUTER_API_KEY in Secrets.");
   const startedAt = Date.now();
@@ -42,6 +42,7 @@ async function complete(modelId: string, messages: ModelMessage[]) {
       "X-Title": "Rewind coding-agent debugger",
     },
     body: JSON.stringify({ model: modelId, temperature: 0.2, max_tokens: 1400, messages, tools, tool_choice: "auto" }),
+    signal,
   });
   const payload = (await response.json()) as OpenRouterResponse;
   if (!response.ok) throw new Error(payload.error?.message ? `OpenRouter request failed: ${payload.error.message}` : `OpenRouter request failed with status ${response.status}.`);
@@ -61,11 +62,17 @@ export async function runCodingAgent(input: {
   systemPrompt: string;
   taskPrompt: string;
   repository: { name: string; slug: string; description: string };
+  signal?: AbortSignal;
+  base?: WorktreeBase | null;
+  onWorktreeReady: (checkpoint: WorktreeCheckpoint) => Promise<void>;
   onAssistant: (content: string, usage: { inputTokens: number; outputTokens: number; latencyMs: number }) => Promise<void>;
   onToolCall: (call: ToolCall) => Promise<void>;
   onToolResult: (call: ToolCall, result: AgentToolResult) => Promise<void>;
 }) {
-  const worktree = await createAgentWorktree(input.repository.slug, input.branchId);
+  const worktree = await createAgentWorktree(input.repository.slug, input.branchId, {
+    signal: input.signal,
+    base: input.base,
+  });
   const messages: ModelMessage[] = [
     {
       role: "system",
@@ -80,10 +87,13 @@ export async function runCodingAgent(input: {
   let totalOutputTokens = 0;
   let totalLatencyMs = 0;
   let finalContent = "";
+  const changedFiles = new Set<string>();
 
   try {
+    await input.onWorktreeReady(await worktree.checkpoint(`Initialize Rewind run ${input.branchId.slice(0, 8)}`));
     for (let turn = 0; turn < 10; turn += 1) {
-      const result = await complete(input.modelId, messages);
+      input.signal?.throwIfAborted();
+      const result = await complete(input.modelId, messages, input.signal);
       totalInputTokens += result.inputTokens;
       totalOutputTokens += result.outputTokens;
       totalLatencyMs += result.latencyMs;
@@ -101,19 +111,40 @@ export async function runCodingAgent(input: {
         let args: Record<string, unknown> = {};
         try {
           args = JSON.parse(call.function.arguments || "{}") as Record<string, unknown>;
-          const toolResult = await worktree.execute(call.function.name, args);
-          await input.onToolResult(call, toolResult);
-          messages.push({ role: "tool", tool_call_id: call.id, content: toolResult.output });
         } catch (error) {
           const failed: AgentToolResult = { output: error instanceof Error ? error.message : "Tool failed.", filesChanged: [] };
           await input.onToolResult(call, failed);
           messages.push({ role: "tool", tool_call_id: call.id, content: failed.output });
+          continue;
         }
+        let toolResult: AgentToolResult;
+        try {
+          toolResult = await worktree.execute(call.function.name, args);
+        } catch (error) {
+          if (input.signal?.aborted) throw error;
+          const failed: AgentToolResult = { output: error instanceof Error ? error.message : "Tool failed.", filesChanged: [] };
+          await input.onToolResult(call, failed);
+          messages.push({ role: "tool", tool_call_id: call.id, content: failed.output });
+          continue;
+        }
+        toolResult.filesChanged.forEach((file) => changedFiles.add(file));
+        if (toolResult.filesChanged.length) {
+          toolResult.checkpoint = await worktree.checkpoint(`Rewind ${call.function.name} ${toolResult.filesChanged.join(", ")}`);
+        }
+        await input.onToolResult(call, toolResult);
+        messages.push({ role: "tool", tool_call_id: call.id, content: toolResult.output });
       }
     }
     if (!finalContent) throw new Error("The agent stopped without a final response.");
     const finalized = await worktree.finalize();
-    return { ...finalized, content: finalContent, totalInputTokens, totalOutputTokens, totalLatencyMs };
+    return {
+      ...finalized,
+      changed: [...changedFiles],
+      content: finalContent,
+      totalInputTokens,
+      totalOutputTokens,
+      totalLatencyMs,
+    };
   } finally {
     await worktree.cleanup();
   }

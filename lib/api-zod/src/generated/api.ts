@@ -251,6 +251,31 @@ export const ForkBranchResponse = zod.array(ForkBranchResponseItem)
 
 
 /**
+ * @summary Cancel a queued or running branch
+ */
+export const CancelBranchParams = zod.object({
+  "id": zod.coerce.string().uuid()
+})
+
+export const CancelBranchResponse = zod.object({
+  "id": zod.string().uuid(),
+  "sessionId": zod.string().uuid(),
+  "parentBranchId": zod.string().uuid().nullish(),
+  "forkStepIndex": zod.number().int().nullish(),
+  "modelId": zod.string(),
+  "systemPrompt": zod.string().optional(),
+  "taskPrompt": zod.string().optional(),
+  "status": zod.enum(['queued', 'running', 'done', 'failed', 'cancelled']),
+  "stepCount": zod.number().int(),
+  "totalInputTokens": zod.number().int(),
+  "totalOutputTokens": zod.number().int(),
+  "queuePosition": zod.number().int().nullish(),
+  "createdAt": zod.coerce.date().optional(),
+  "finishedAt": zod.coerce.date().nullish()
+})
+
+
+/**
  * @summary Compare two trajectory points
  */
 export const GetDiffQueryParams = zod.object({

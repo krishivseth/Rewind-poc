@@ -840,6 +840,77 @@ export const useForkBranch = <TError = ErrorType<unknown>,
       return useMutation(getForkBranchMutationOptions(options));
     }
 
+export const getCancelBranchUrl = (id: string,) => {
+
+
+
+
+  return `/api/branches/${id}/cancel`
+}
+
+/**
+ * @summary Cancel a queued or running branch
+ */
+export const cancelBranch = async (id: string, options?: Parameters<typeof customFetch>[1]): Promise<Branch> => {
+
+  return customFetch<Branch>(getCancelBranchUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getCancelBranchMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelBranch>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof cancelBranch>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['cancelBranch'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof cancelBranch>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  cancelBranch(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CancelBranchMutationResult = NonNullable<Awaited<ReturnType<typeof cancelBranch>>>
+
+    export type CancelBranchMutationError = ErrorType<void>
+
+    /**
+ * @summary Cancel a queued or running branch
+ */
+export const useCancelBranch = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelBranch>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof cancelBranch>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getCancelBranchMutationOptions(options));
+    }
+
 export const getGetDiffUrl = (params: GetDiffParams,) => {
   const normalizedParams = new URLSearchParams();
 

@@ -183,6 +183,22 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Branch"
+  /branches/{id}/cancel:
+    post:
+      operationId: cancelBranch
+      tags: [branches]
+      summary: Cancel a queued or running branch
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Cancelled branch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Branch"
+        "409":
+          description: Branch is already terminal
   /diff:
     get:
       operationId: getDiff

@@ -28,6 +28,7 @@ import {
   Search,
   Server,
   Settings2,
+  Square,
   Split,
   TerminalSquare,
   X,
@@ -43,6 +44,7 @@ import {
   getListStepFilesQueryKey,
   getReadFileAtStepQueryKey,
   useCreateSession,
+  useCancelBranch,
   useForkBranch,
   useGetDiff,
   useGetSession,
@@ -124,7 +126,7 @@ function AppShell({ children }: { children: ReactNode }) {
 }
 
 function StatusDot({ status, pulse = false }: { status?: string; pulse?: boolean }) {
-  return <span className={cx('inline-block h-1.5 w-1.5 rounded-full', status === 'failed' ? 'bg-red-400' : status === 'done' ? 'bg-teal-400' : status === 'queued' ? 'bg-amber-300' : 'bg-sky-300', pulse && 'pulse-dot')} />;
+  return <span className={cx('inline-block h-1.5 w-1.5 rounded-full', status === 'failed' ? 'bg-red-400' : status === 'cancelled' ? 'bg-slate-500' : status === 'done' ? 'bg-teal-400' : status === 'queued' ? 'bg-amber-300' : 'bg-sky-300', pulse && 'pulse-dot')} />;
 }
 
 function Brand() {
@@ -295,6 +297,7 @@ function Workspace() {
   const diffParams = { a: `${selectedBranchId}:${activeIndex}`, b: `${compareBranch?.id ?? ''}:0` };
   const diffQuery = useGetDiff(diffParams, { query: { enabled: Boolean(showDiff && compareBranch && selectedStep), queryKey: getGetDiffQueryKey(diffParams) } });
   const forkBranch = useForkBranch();
+  const cancelBranch = useCancelBranch();
 
   useEffect(() => {
     if (!selectedBranchId) return;
@@ -331,7 +334,7 @@ function Workspace() {
       <div className="flex min-h-[calc(100dvh-3.5rem)] flex-col">
         <div className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-[#0c1016] px-4 sm:px-6">
           <div className="flex min-w-0 items-center gap-3"><Link href="/" data-testid="link-back-sessions" className="text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4" /></Link><span className="h-4 w-px bg-border" /><span className="truncate font-mono text-xs text-foreground">{session?.title ?? 'Loading session…'}</span>{selectedBranch && <span className="hidden items-center gap-1.5 border border-border px-2 py-1 font-mono text-[10px] text-muted-foreground sm:flex"><GitBranch className="h-3 w-3 text-primary" /> {selectedBranch.id.slice(0, 8)}</span>}</div>
-          <div className="flex items-center gap-2"><span className="hidden items-center gap-1.5 font-mono text-[9px] uppercase tracking-wider text-muted-foreground sm:flex"><StatusDot status={liveState === 'live' ? 'done' : liveState === 'offline' ? 'failed' : 'queued'} pulse={liveState === 'connecting'} /> {liveState}</span><button type="button" data-testid="button-toggle-diff" onClick={() => setShowDiff((value) => !value)} className={cx('flex items-center gap-1.5 border px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-wider transition-colors', showDiff ? 'border-primary/60 bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:text-foreground')}><GitCompare className="h-3.5 w-3.5" /> <span className="hidden sm:inline">compare</span></button><button type="button" data-testid="button-fork-header" onClick={() => setShowFork(true)} disabled={!selectedStep} className="flex items-center gap-1.5 border border-primary/40 px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-wider text-primary hover:bg-primary/10 disabled:opacity-40"><Split className="h-3.5 w-3.5" /> fork</button></div>
+          <div className="flex items-center gap-2"><span className="hidden items-center gap-1.5 font-mono text-[9px] uppercase tracking-wider text-muted-foreground sm:flex"><StatusDot status={liveState === 'live' ? 'done' : liveState === 'offline' ? 'failed' : 'queued'} pulse={liveState === 'connecting'} /> {liveState}</span>{(selectedBranch?.status === 'queued' || selectedBranch?.status === 'running') && <button type="button" data-testid="button-cancel-branch" disabled={cancelBranch.isPending} onClick={() => cancelBranch.mutate({ id: selectedBranch.id }, { onSuccess: (updated) => { queryClient.setQueryData(getGetSessionQueryKey(id), (current: any) => current ? { ...current, branches: current.branches.map((branch: any) => branch.id === updated.id ? updated : branch) } : current); } })} className="flex items-center gap-1.5 border border-red-400/35 px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-wider text-red-300 hover:bg-red-400/10 disabled:opacity-40"><Square className="h-3 w-3 fill-current" /> stop</button>}<button type="button" data-testid="button-toggle-diff" onClick={() => setShowDiff((value) => !value)} className={cx('flex items-center gap-1.5 border px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-wider transition-colors', showDiff ? 'border-primary/60 bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:text-foreground')}><GitCompare className="h-3.5 w-3.5" /> <span className="hidden sm:inline">compare</span></button><button type="button" data-testid="button-fork-header" onClick={() => setShowFork(true)} disabled={!selectedStep} className="flex items-center gap-1.5 border border-primary/40 px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-wider text-primary hover:bg-primary/10 disabled:opacity-40"><Split className="h-3.5 w-3.5" /> fork</button></div>
         </div>
         {sessionQuery.isLoading ? <WorkspaceSkeleton /> : sessionQuery.isError ? <div className="m-4"><QueryError onRetry={refetchAll} /></div> : (
           <div className="grid min-h-0 flex-1 lg:grid-cols-[220px_minmax(420px,1fr)_320px]">

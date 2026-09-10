@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { downloadBundle, uploadBundle } from "./bundle-storage";
 
 const execFileAsync = promisify(execFile);
 const baseRoot = path.join(tmpdir(), "rewind-base-repos");
@@ -29,9 +30,15 @@ const fixtures: Record<string, Record<string, string>> = {
   },
 };
 
-async function git(cwd: string, args: string[], timeout = 60_000) {
-  const result = await execFileAsync("git", args, { cwd, timeout, maxBuffer: 2_000_000 });
-  return `${result.stdout}${result.stderr}`.trim();
+async function runFile(cwd: string, file: string, args: readonly string[], signal?: AbortSignal, timeout = 60_000) {
+  signal?.throwIfAborted();
+  const result = await execFileAsync(file, [...args], { cwd, timeout, maxBuffer: 2_000_000, signal });
+  signal?.throwIfAborted();
+  return `${result.stdout}${result.stderr}`;
+}
+
+function git(cwd: string, args: readonly string[], signal?: AbortSignal, timeout?: number) {
+  return runFile(cwd, "git", args, signal, timeout);
 }
 
 async function ensureBareRepository(slug: string) {
@@ -74,32 +81,104 @@ function safePath(root: string, requested: string) {
 }
 
 function truncate(value: string, max = 30_000) {
-  return value.length > max ? `${value.slice(0, max)}\n…output truncated…` : value;
+  const trimmed = value.trim();
+  return trimmed.length > max ? `${trimmed.slice(0, max)}\n…output truncated…` : trimmed;
 }
 
 export type AgentToolName = "list_files" | "read_file" | "write_file" | "edit_file" | "run_tests" | "git_diff";
+export type WorktreeCheckpoint = {
+  changed: string[];
+  commitHash: string;
+  bundleKey: string;
+};
+export type WorktreeBase = { bundleKey: string; commitHash: string };
 export type AgentToolResult = {
   output: string;
   filesChanged: string[];
   snapshot?: { path: string; content: string };
+  checkpoint?: WorktreeCheckpoint;
 };
 
-export async function createAgentWorktree(slug: string, branchId: string) {
-  const barePath = await ensureBareRepository(slug);
+export async function createAgentWorktree(
+  slug: string,
+  branchId: string,
+  options: {
+    signal?: AbortSignal;
+    base?: WorktreeBase | null;
+  } = {},
+) {
+  const { signal, base } = options;
   await Promise.all([
     mkdir(worktreeRoot, { recursive: true }),
     mkdir(bundleRoot, { recursive: true }),
   ]);
+
+  const cleanupPaths: string[] = [];
+  let barePath: string;
+  let startCommit = "HEAD";
+  if (base) {
+    const localBundle = path.join(bundleRoot, `${branchId}-base.bundle`);
+    barePath = path.join(bundleRoot, `${branchId}-base.git`);
+    try {
+      await downloadBundle(base.bundleKey, localBundle, signal);
+      signal?.throwIfAborted();
+      await git(tmpdir(), ["clone", "--bare", localBundle, barePath], signal);
+      await git(tmpdir(), ["--git-dir", barePath, "cat-file", "-e", `${base.commitHash}^{commit}`], signal);
+    } catch (error) {
+      await Promise.all([
+        rm(localBundle, { force: true }),
+        rm(barePath, { recursive: true, force: true }),
+      ]);
+      throw error;
+    }
+    startCommit = base.commitHash;
+    cleanupPaths.push(localBundle, barePath);
+  } else {
+    barePath = await ensureBareRepository(slug);
+  }
+
   const root = await mkdtemp(path.join(worktreeRoot, `${branchId.slice(0, 8)}-`));
-  await git(tmpdir(), ["--git-dir", barePath, "worktree", "add", "--detach", root, "HEAD"]);
-  await git(root, ["config", "user.email", "rewind@local"]);
-  await git(root, ["config", "user.name", "Rewind Agent"]);
+  try {
+    await git(tmpdir(), ["--git-dir", barePath, "worktree", "add", "--detach", root, startCommit], signal);
+    await git(root, ["config", "user.email", "rewind@local"], signal);
+    await git(root, ["config", "user.name", "Rewind Agent"], signal);
+  } catch (error) {
+    await git(tmpdir(), ["--git-dir", barePath, "worktree", "remove", "--force", root]).catch(() => undefined);
+    await Promise.all([
+      rm(root, { recursive: true, force: true }),
+      ...cleanupPaths.map((cleanupPath) => rm(cleanupPath, { recursive: true, force: true })),
+    ]);
+    throw error;
+  }
+
+  const checkpoint = async (label: string): Promise<WorktreeCheckpoint> => {
+    signal?.throwIfAborted();
+    const status = await git(root, ["status", "--porcelain=v1", "-z"], signal);
+    const changed = status.split("\0").filter(Boolean).map((entry) => entry.slice(3));
+    if (changed.length) {
+      await git(root, ["add", "-A"], signal);
+      await git(root, ["commit", "-m", label], signal);
+    }
+    const commitHash = (await git(root, ["rev-parse", "HEAD"], signal)).trim();
+    const localBundle = path.join(bundleRoot, `${branchId}-${commitHash}.bundle`);
+    try {
+      await git(root, ["bundle", "create", localBundle, "HEAD"], signal);
+      signal?.throwIfAborted();
+      const bundleKey = await uploadBundle(localBundle, branchId, commitHash, signal);
+      signal?.throwIfAborted();
+      return { changed, commitHash, bundleKey };
+    } finally {
+      await rm(localBundle, { force: true });
+    }
+  };
 
   return {
     root,
+    checkpoint,
     async execute(name: AgentToolName, args: Record<string, unknown>): Promise<AgentToolResult> {
+      signal?.throwIfAborted();
       if (name === "list_files") {
-        return { output: await git(root, ["ls-files"]), filesChanged: [] };
+        return { output: truncate(await git(root, ["ls-files"], signal)), filesChanged: [] };
       }
       if (name === "read_file") {
         const requested = String(args.path ?? "");
@@ -113,6 +192,7 @@ export async function createAgentWorktree(slug: string, branchId: string) {
         const target = safePath(root, requested);
         await mkdir(path.dirname(target), { recursive: true });
         await writeFile(target, content, "utf8");
+        signal?.throwIfAborted();
         return { output: `Wrote ${requested}`, filesChanged: [requested], snapshot: { path: requested, content } };
       }
       if (name === "edit_file") {
@@ -124,42 +204,36 @@ export async function createAgentWorktree(slug: string, branchId: string) {
         if (!oldString || !current.includes(oldString)) throw new Error("old_string was not found.");
         const content = current.replace(oldString, newString);
         await writeFile(target, content, "utf8");
+        signal?.throwIfAborted();
         return { output: `Edited ${requested}`, filesChanged: [requested], snapshot: { path: requested, content } };
       }
       if (name === "run_tests") {
-        const files = await git(root, ["ls-files"]);
+        const files = await git(root, ["ls-files"], signal);
         const command = files.includes("package.json")
           ? ["npm", ["test"]] as const
           : ["python", ["-m", "unittest", "discover", "-v"]] as const;
         try {
-          const result = await execFileAsync(command[0], command[1], { cwd: root, timeout: 90_000, maxBuffer: 2_000_000 });
-          return { output: truncate(`${result.stdout}${result.stderr}`.trim()), filesChanged: [] };
+          return { output: truncate(await runFile(root, command[0], command[1], signal, 90_000)), filesChanged: [] };
         } catch (error) {
+          if (signal?.aborted) throw error;
           const failure = error as { stdout?: string; stderr?: string; message?: string };
-          return { output: truncate(`${failure.stdout ?? ""}${failure.stderr ?? ""}`.trim() || failure.message || "Tests failed."), filesChanged: [] };
+          return { output: truncate(`${failure.stdout ?? ""}${failure.stderr ?? ""}` || failure.message || "Tests failed."), filesChanged: [] };
         }
       }
       if (name === "git_diff") {
-        return { output: truncate(await git(root, ["diff", "--no-ext-diff"])), filesChanged: [] };
+        return { output: truncate(await git(root, ["diff", "--no-ext-diff", "HEAD"], signal)), filesChanged: [] };
       }
       throw new Error(`Unsupported tool: ${name}`);
     },
     async finalize() {
-      const changed = (await git(root, ["diff", "--name-only", "HEAD"]))
-        .split("\n")
-        .filter(Boolean);
-      if (changed.length) {
-        await git(root, ["add", "-A"]);
-        await git(root, ["commit", "-m", `Rewind agent run ${branchId.slice(0, 8)}`]);
-      }
-      const commitHash = await git(root, ["rev-parse", "HEAD"]);
-      const bundleKey = path.join(bundleRoot, `${branchId}.bundle`);
-      await git(root, ["bundle", "create", bundleKey, "HEAD"]);
-      return { changed, commitHash, bundleKey };
+      return checkpoint(`Rewind agent run ${branchId.slice(0, 8)}`);
     },
     async cleanup() {
       await git(tmpdir(), ["--git-dir", barePath, "worktree", "remove", "--force", root]).catch(() => undefined);
-      await rm(root, { recursive: true, force: true });
+      await Promise.all([
+        rm(root, { recursive: true, force: true }),
+        ...cleanupPaths.map((cleanupPath) => rm(cleanupPath, { recursive: true, force: true })),
+      ]);
     },
   };
 }
