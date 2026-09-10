@@ -60,3 +60,8 @@ export async function downloadBundle(objectKey: string, destination: string, sig
     { signal },
   );
 }
+
+export async function deleteBundle(objectKey: string) {
+  const { bucketName, objectName } = locationFromObjectKey(objectKey);
+  await storage.bucket(bucketName).file(objectName).delete({ ignoreNotFound: true });
+}

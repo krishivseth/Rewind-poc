@@ -1,5 +1,5 @@
 import { Router, type IRouter, type Response } from "express";
-import { and, asc, desc, eq, inArray, isNull, lte, or } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lte, or } from "drizzle-orm";
 import {
   CreateSessionBody,
   ForkBranchBody,
@@ -12,10 +12,14 @@ import {
 } from "@workspace/api-zod";
 import { branches, db, repos, sessions, steps } from "@workspace/db";
 import { runCodingAgent } from "../lib/openrouter";
+import { runBundleCleanup, sessionExpiry } from "../lib/run-bundles";
+import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
 const subscribers = new Map<string, Set<Response>>();
 const activeRuns = new Map<string, AbortController>();
+const RUN_LEASE_MS = 15 * 60 * 1000;
+const RUN_HEARTBEAT_MS = 5 * 60 * 1000;
 
 class BranchStoppedError extends Error {
   constructor() {
@@ -79,7 +83,7 @@ async function visibleBranch(branchId: string, userId: string) {
     .select({ branch: branches, sessionUserId: sessions.userId })
     .from(branches)
     .innerJoin(sessions, eq(branches.sessionId, sessions.id))
-    .where(eq(branches.id, branchId));
+    .where(and(eq(branches.id, branchId), isNull(sessions.deletedAt), gte(sessions.expiresAt, new Date())));
   return row && (row.sessionUserId === null || row.sessionUserId === userId) ? row.branch : null;
 }
 
@@ -88,7 +92,12 @@ async function ownedBranch(branchId: string, userId: string) {
     .select({ branch: branches })
     .from(branches)
     .innerJoin(sessions, eq(branches.sessionId, sessions.id))
-    .where(and(eq(branches.id, branchId), eq(sessions.userId, userId)));
+    .where(and(
+      eq(branches.id, branchId),
+      eq(sessions.userId, userId),
+      isNull(sessions.deletedAt),
+      gte(sessions.expiresAt, new Date()),
+    ));
   return row?.branch ?? null;
 }
 
@@ -120,18 +129,29 @@ function startBranch(branchId: string) {
   if (activeRuns.has(branchId)) return;
   const controller = new AbortController();
   activeRuns.set(branchId, controller);
+  const renewLease = () => db
+    .update(branches)
+    .set({ leaseExpiresAt: new Date(Date.now() + RUN_LEASE_MS) })
+    .where(and(eq(branches.id, branchId), inArray(branches.status, ["queued", "running"])));
+  const heartbeatLease = () => void renewLease().catch((error) => {
+    logger.error({ err: error, branchId }, "Run lease heartbeat failed");
+  });
+  heartbeatLease();
+  const heartbeat = setInterval(heartbeatLease, RUN_HEARTBEAT_MS);
+  heartbeat.unref();
   void runBranch(branchId, controller.signal)
     .catch(async (error) => {
       const cancelled = controller.signal.aborted;
       const message = cancelled ? "Run cancelled." : error instanceof Error ? error.message : "The agent run failed.";
       const [updated] = await db
         .update(branches)
-        .set({ status: cancelled ? "cancelled" : "failed", finishedAt: new Date() })
+        .set({ status: cancelled ? "cancelled" : "failed", finishedAt: new Date(), leaseExpiresAt: null })
         .where(and(eq(branches.id, branchId), inArray(branches.status, ["queued", "running"])))
         .returning();
       if (updated) publishBranchEvent(branchId, { type: "status", status: cancelled ? "cancelled" : "failed", error: cancelled ? undefined : message });
     })
     .finally(() => {
+      clearInterval(heartbeat);
       if (activeRuns.get(branchId) === controller) activeRuns.delete(branchId);
     });
 }
@@ -147,7 +167,7 @@ async function runBranch(branchId: string, signal: AbortSignal) {
   if (!repo) {
     await db
       .update(branches)
-      .set({ status: "failed", finishedAt: new Date() })
+      .set({ status: "failed", finishedAt: new Date(), leaseExpiresAt: null })
       .where(eq(branches.id, branchId));
     return;
   }
@@ -160,7 +180,7 @@ async function runBranch(branchId: string, signal: AbortSignal) {
   signal.throwIfAborted();
   const [started] = await db
     .update(branches)
-    .set({ status: "running" })
+    .set({ status: "running", leaseExpiresAt: new Date(Date.now() + RUN_LEASE_MS) })
     .where(and(eq(branches.id, branchId), eq(branches.status, "queued")))
     .returning();
   if (!started) return;
@@ -280,6 +300,7 @@ async function runBranch(branchId: string, signal: AbortSignal) {
         totalInputTokens: result.totalInputTokens,
         totalOutputTokens: result.totalOutputTokens,
         bundleKey: result.bundleKey,
+        leaseExpiresAt: null,
         finishedAt: new Date(),
       })
       .where(and(eq(branches.id, branchId), eq(branches.status, "running")))
@@ -300,6 +321,7 @@ async function runBranch(branchId: string, signal: AbortSignal) {
       .set({
         status: "failed",
         stepCount: nextIndex,
+        leaseExpiresAt: null,
         finishedAt: new Date(),
       })
       .where(and(eq(branches.id, branchId), eq(branches.status, "running")))
@@ -318,7 +340,11 @@ router.get("/sessions", async (_req, res) => {
   const rows = await db
     .select()
     .from(sessions)
-    .where(or(eq(sessions.userId, userId), isNull(sessions.userId)))
+    .where(and(
+      or(eq(sessions.userId, userId), isNull(sessions.userId)),
+      isNull(sessions.deletedAt),
+      gte(sessions.expiresAt, new Date()),
+    ))
     .orderBy(desc(sessions.createdAt));
   const result = await Promise.all(
     rows.map(async (session) => {
@@ -348,7 +374,7 @@ router.post("/sessions", async (req, res) => {
   }
   const [session] = await db
     .insert(sessions)
-    .values({ repoId: body.repoId, title: body.title, userId })
+    .values({ repoId: body.repoId, title: body.title, userId, expiresAt: sessionExpiry() })
     .returning();
   const [branch] = await db
     .insert(branches)
@@ -369,13 +395,43 @@ router.post("/sessions", async (req, res) => {
   startBranch(branch.id);
 });
 
+router.delete("/sessions/:id", async (req, res) => {
+  const userId = res.locals.userId as string;
+  const { id } = GetSessionParams.parse(req.params);
+  const [session] = await db
+    .select({ id: sessions.id })
+    .from(sessions)
+    .where(and(eq(sessions.id, id), eq(sessions.userId, userId)));
+  if (!session) {
+    res.status(404).json({ error: "Session not found" });
+    return;
+  }
+  const [activeBranch] = await db
+    .select({ id: branches.id })
+    .from(branches)
+    .where(and(eq(branches.sessionId, id), inArray(branches.status, ["queued", "running"])))
+    .limit(1);
+  if (activeBranch) {
+    res.status(409).json({ error: "Cancel active branches before deleting this session." });
+    return;
+  }
+  await db.update(sessions).set({ deletedAt: new Date() }).where(eq(sessions.id, id));
+  void runBundleCleanup();
+  res.status(202).json({ status: "scheduled" });
+});
+
 router.get("/sessions/:id", async (req, res) => {
   const userId = res.locals.userId as string;
   const { id } = GetSessionParams.parse(req.params);
   const [session] = await db
     .select()
     .from(sessions)
-    .where(and(eq(sessions.id, id), or(eq(sessions.userId, userId), isNull(sessions.userId))));
+    .where(and(
+      eq(sessions.id, id),
+      or(eq(sessions.userId, userId), isNull(sessions.userId)),
+      isNull(sessions.deletedAt),
+      gte(sessions.expiresAt, new Date()),
+    ));
   if (!session) {
     res.status(404).json({ error: "Session not found" });
     return;
@@ -445,7 +501,7 @@ router.post("/branches/:id/cancel", async (req, res) => {
   }
   const [updated] = await db
     .update(branches)
-    .set({ status: "cancelled", finishedAt: new Date() })
+    .set({ status: "cancelled", finishedAt: new Date(), leaseExpiresAt: null })
     .where(and(eq(branches.id, id), inArray(branches.status, ["queued", "running"])))
     .returning();
   if (!updated) {
@@ -560,29 +616,58 @@ router.post("/branches/:id/fork", async (req, res) => {
     res.status(404).json({ error: "Session not found" });
     return;
   }
-  let targetSessionId = parent.sessionId;
-  let parentBranchId: string | null = parent.id;
-  if (parentSession.userId === null) {
-    const [privateSession] = await db
-      .insert(sessions)
-      .values({ userId, repoId: parentSession.repoId, title: `${parentSession.title} / fork` })
+  const created = await db.transaction(async (tx) => {
+    const [lockedSession] = await tx
+      .select()
+      .from(sessions)
+      .where(and(
+        eq(sessions.id, parent.sessionId),
+        isNull(sessions.deletedAt),
+        gte(sessions.expiresAt, new Date()),
+      ))
+      .for("update");
+    if (!lockedSession) return null;
+    const [lockedParent] = await tx.select().from(branches).where(eq(branches.id, parent.id));
+    if (!lockedParent) return null;
+    const lockedCheckpoints = await tx
+      .select()
+      .from(steps)
+      .where(and(eq(steps.branchId, lockedParent.id), lte(steps.stepIndex, body.stepIndex)))
+      .orderBy(desc(steps.stepIndex));
+    if (!lockedCheckpoints.some((step) => checkpointFromStep(step))) return null;
+
+    let targetSessionId = lockedParent.sessionId;
+    if (lockedSession.userId === null) {
+      const [privateSession] = await tx
+        .insert(sessions)
+        .values({
+          userId,
+          repoId: lockedSession.repoId,
+          title: `${lockedSession.title} / fork`,
+          expiresAt: sessionExpiry(),
+        })
+        .returning();
+      targetSessionId = privateSession.id;
+    }
+    return tx
+      .insert(branches)
+      .values(
+        Array.from({ length: body.count ?? 1 }, () => ({
+          sessionId: targetSessionId,
+          parentBranchId: lockedParent.id,
+          forkStepIndex: body.stepIndex,
+          modelId: body.modelId,
+          taskPrompt: body.editedTaskPrompt ?? lockedParent.taskPrompt,
+          systemPrompt: lockedParent.systemPrompt,
+          status: "queued" as const,
+        })),
+      )
       .returning();
-    targetSessionId = privateSession.id;
+  });
+  if (!created) {
+    res.status(409).json({ error: "The selected session expired before the fork could be created." });
+    return;
   }
-  const created = await db
-    .insert(branches)
-    .values(
-      Array.from({ length: body.count ?? 1 }, () => ({
-        sessionId: targetSessionId,
-        parentBranchId,
-        forkStepIndex: body.stepIndex,
-        modelId: body.modelId,
-        taskPrompt: body.editedTaskPrompt ?? parent.taskPrompt,
-        systemPrompt: parent.systemPrompt,
-        status: "queued" as const,
-      })),
-    )
-    .returning();
   res.status(201).json(created.map(branchView));
   created.forEach((branch) => startBranch(branch.id));
 });

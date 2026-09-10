@@ -1,6 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { ensureRewindSeedData } from "./lib/rewind-seed";
+import { startRunBundleCleanup } from "./lib/run-bundles";
 
 const rawPort = process.env["PORT"];
 
@@ -17,6 +18,7 @@ if (Number.isNaN(port) || port <= 0) {
 }
 
 await ensureRewindSeedData();
+startRunBundleCleanup();
 
 app.listen(port, (err) => {
   if (err) {

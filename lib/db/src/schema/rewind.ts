@@ -1,4 +1,5 @@
 import {
+  index,
   integer,
   jsonb,
   pgEnum,
@@ -7,6 +8,7 @@ import {
   timestamp,
   uuid,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 export const branchStatus = pgEnum("branch_status", [
   "queued",
@@ -38,7 +40,11 @@ export const sessions = pgTable("sessions", {
   repoId: uuid("repo_id").notNull().references(() => repos.id),
   title: text("title").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull().default(sql`now() + interval '30 days'`),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+}, (table) => [
+  index("sessions_retention_idx").on(table.deletedAt, table.expiresAt),
+]);
 
 export const branches = pgTable("branches", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -53,6 +59,7 @@ export const branches = pgTable("branches", {
   totalInputTokens: integer("total_input_tokens").notNull().default(0),
   totalOutputTokens: integer("total_output_tokens").notNull().default(0),
   bundleKey: text("bundle_key"),
+  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   finishedAt: timestamp("finished_at", { withTimezone: true }),
 });
@@ -71,6 +78,14 @@ export const steps = pgTable("steps", {
   inputTokens: integer("input_tokens"),
   outputTokens: integer("output_tokens"),
   latencyMs: integer("latency_ms"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const bundleCleanupQueue = pgTable("bundle_cleanup_queue", {
+  bundleKey: text("bundle_key").primaryKey(),
+  attempts: integer("attempts").notNull().default(0),
+  lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+  lastError: text("last_error"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
