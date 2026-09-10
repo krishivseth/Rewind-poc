@@ -1,8 +1,11 @@
-import { type ReactNode, useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { ClerkProvider, RedirectToSignIn, Show, SignIn, SignUp, UserButton, useAuth, useClerk } from '@clerk/react';
+import { publishableKeyFromHost } from '@clerk/react/internal';
+import { shadcn } from '@clerk/themes';
 import {
   AlertCircle,
   ArrowLeft,
@@ -51,7 +54,7 @@ import {
   useListStepFiles,
   useReadFileAtStep,
 } from '@workspace/api-client-react';
-import { Link, Route, Switch, Router as WouterRouter, useLocation, useParams } from 'wouter';
+import { Link, Redirect, Route, Switch, Router as WouterRouter, useLocation, useParams } from 'wouter';
 
 const queryClient = new QueryClient();
 
@@ -64,6 +67,56 @@ const kindTone: Record<string, string> = {
   assistant: 'text-violet-300 bg-violet-400/10 border-violet-400/20',
   tool_call: 'text-amber-300 bg-amber-400/10 border-amber-400/20',
   tool_result: 'text-teal-300 bg-teal-400/10 border-teal-400/20',
+};
+const clerkPubKey = publishableKeyFromHost(window.location.hostname, import.meta.env.VITE_CLERK_PUBLISHABLE_KEY);
+const clerkProxyUrl = import.meta.env.VITE_CLERK_PROXY_URL;
+const basePath = import.meta.env.BASE_URL.replace(/\/$/, '');
+
+function stripBase(path: string) {
+  return basePath && path.startsWith(basePath) ? path.slice(basePath.length) || '/' : path;
+}
+
+const clerkAppearance = {
+  theme: shadcn,
+  cssLayerName: 'clerk',
+  options: {
+    logoPlacement: 'inside' as const,
+    logoLinkUrl: basePath || '/',
+    logoImageUrl: `${window.location.origin}${basePath}/logo.svg`,
+  },
+  variables: {
+    colorPrimary: '#20d4c3',
+    colorForeground: '#e5edf2',
+    colorMutedForeground: '#7f8a96',
+    colorDanger: '#ff7b86',
+    colorBackground: '#10171b',
+    colorInput: '#0b1016',
+    colorInputForeground: '#e5edf2',
+    colorNeutral: '#2a3941',
+    fontFamily: '"IBM Plex Mono", monospace',
+    borderRadius: '0px',
+  },
+  elements: {
+    rootBox: 'w-full flex justify-center',
+    cardBox: 'bg-[#10171b] border border-[#2a3941] rounded-none w-[440px] max-w-full overflow-hidden',
+    card: '!shadow-none !border-0 !bg-transparent !rounded-none',
+    footer: '!shadow-none !border-0 !bg-transparent !rounded-none',
+    headerTitle: 'font-mono text-[#e5edf2]',
+    headerSubtitle: 'font-mono text-[#7f8a96]',
+    socialButtonsBlockButtonText: 'font-mono text-[#e5edf2]',
+    formFieldLabel: 'font-mono text-[#a9b7c0]',
+    footerActionLink: 'font-mono text-[#20d4c3]',
+    footerActionText: 'font-mono text-[#7f8a96]',
+    dividerText: 'font-mono text-[#7f8a96]',
+    formButtonPrimary: 'font-mono uppercase tracking-wider bg-[#20d4c3] text-[#071012] hover:bg-[#54e0d2]',
+    formFieldInput: 'font-mono bg-[#0b1016] text-[#e5edf2] border-[#2a3941]',
+    socialButtonsBlockButton: 'font-mono bg-[#0b1016] border-[#2a3941] hover:bg-[#152127]',
+    dividerLine: 'bg-[#2a3941]',
+    alert: 'bg-[#35191d] border-[#71333c]',
+    alertText: 'font-mono text-[#ffb0b7]',
+    otpCodeFieldInput: 'font-mono bg-[#0b1016] text-[#e5edf2] border-[#2a3941]',
+    main: 'bg-[#10171b]',
+  },
 };
 
 function AppShell({ children }: { children: ReactNode }) {
@@ -97,6 +150,7 @@ function TopBar({ health }: { health?: string }) {
       <div className="flex items-center gap-3 text-[10px] font-mono uppercase tracking-wider">
         <span className="hidden items-center gap-2 text-muted-foreground md:flex"><Server className="h-3.5 w-3.5 text-primary" /> api {health === 'ok' ? 'online' : health ? health : 'checking'}</span>
         <span className="h-3.5 w-px bg-border" />
+        <Show when="signed-in"><UserButton appearance={{ elements: { userButtonAvatarBox: 'h-6 w-6' } }} /></Show>
         <button type="button" data-testid="button-settings" className="text-muted-foreground hover:text-foreground transition-colors" aria-label="Settings"><Settings2 className="h-4 w-4" /></button>
       </div>
     </header>
@@ -345,8 +399,43 @@ function NotFound() {
   return <AppShell><TopBar /><main className="mx-auto flex min-h-[calc(100dvh-3.5rem)] max-w-3xl flex-col items-center justify-center px-6 text-center"><div className="mb-5 font-mono text-6xl text-primary/30">404</div><h1 className="font-mono text-xl">Trajectory not found</h1><p className="mt-2 text-sm text-muted-foreground">The route points somewhere Rewind has not recorded.</p><Link href="/" data-testid="link-not-found-home" className="mt-6 border border-primary/40 px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-primary hover:bg-primary/10">return to sessions</Link></main></AppShell>;
 }
 
+function Landing() {
+  return <AppShell><TopBar /><main className="mx-auto flex min-h-[calc(100dvh-3.5rem)] max-w-5xl flex-col justify-center px-6 py-16"><div className="max-w-2xl"><div className="mb-4 font-mono text-[10px] uppercase tracking-[.24em] text-primary">trajectory debugger</div><h1 className="font-mono text-4xl leading-tight text-foreground sm:text-6xl">Find the moment it changed.</h1><p className="mt-6 max-w-xl text-base leading-7 text-muted-foreground">Rewind coding-agent sessions, inspect the exact context and repository state, and branch from the step where the result went wrong.</p><div className="mt-8 flex flex-wrap gap-3"><Link href="/sign-up" className="bg-primary px-5 py-3 font-mono text-[11px] font-semibold uppercase tracking-wider text-primary-foreground hover:bg-primary/90">Create account</Link><Link href="/sign-in" className="border border-border px-5 py-3 font-mono text-[11px] uppercase tracking-wider text-muted-foreground hover:border-primary/50 hover:text-primary">Sign in</Link></div></div><div className="mt-20 grid gap-px border border-border bg-border sm:grid-cols-3"><div className="bg-card/80 p-5"><p className="font-mono text-[10px] uppercase tracking-wider text-primary">01 / inspect</p><p className="mt-3 font-mono text-sm text-foreground">Scrub every model and tool event.</p></div><div className="bg-card/80 p-5"><p className="font-mono text-[10px] uppercase tracking-wider text-primary">02 / compare</p><p className="mt-3 font-mono text-sm text-foreground">See context, files, and branches side by side.</p></div><div className="bg-card/80 p-5"><p className="font-mono text-[10px] uppercase tracking-wider text-primary">03 / rewind</p><p className="mt-3 font-mono text-sm text-foreground">Fork from the exact moment that mattered.</p></div></div></main></AppShell>;
+}
+
+function HomeRedirect() {
+  const { isLoaded, isSignedIn } = useAuth();
+  if (!isLoaded) return <AppShell><div className="grid min-h-[100dvh] place-items-center font-mono text-xs text-muted-foreground">loading auth…</div></AppShell>;
+  return isSignedIn ? <Home /> : <Landing />;
+}
+
+function ProtectedWorkspace() {
+  const { isLoaded, isSignedIn } = useAuth();
+  if (!isLoaded) return <AppShell><div className="grid min-h-[100dvh] place-items-center font-mono text-xs text-muted-foreground">loading auth…</div></AppShell>;
+  return isSignedIn ? <Workspace /> : <Redirect to="/" />;
+}
+
+function SignInPage() {
+  return <div className="flex min-h-[100dvh] items-center justify-center bg-background px-4"><SignIn routing="path" path={`${basePath}/sign-in`} signUpUrl={`${basePath}/sign-up`} /></div>;
+}
+
+function SignUpPage() {
+  return <div className="flex min-h-[100dvh] items-center justify-center bg-background px-4"><SignUp routing="path" path={`${basePath}/sign-up`} signInUrl={`${basePath}/sign-in`} /></div>;
+}
+
+function ClerkQueryClientCacheInvalidator() {
+  const { addListener } = useClerk();
+  const prevUserId = useRef<string | null | undefined>(undefined);
+  useEffect(() => addListener(({ user }) => {
+    const userId = user?.id ?? null;
+    if (prevUserId.current !== undefined && prevUserId.current !== userId) queryClient.clear();
+    prevUserId.current = userId;
+  }), [addListener]);
+  return null;
+}
+
 function Router() {
-  return <Switch><Route path="/" component={Home} /><Route path="/sessions/:id" component={Workspace} /><Route component={NotFound} /></Switch>;
+  return <Switch><Route path="/" component={HomeRedirect} /><Route path="/sign-in/*?" component={SignInPage} /><Route path="/sign-up/*?" component={SignUpPage} /><Route path="/sessions/:id" component={ProtectedWorkspace} /><Route component={NotFound} /></Switch>;
 }
 
 function RoutedErrorBoundary({ children }: { children: ReactNode }) {
@@ -355,7 +444,8 @@ function RoutedErrorBoundary({ children }: { children: ReactNode }) {
 }
 
 function App() {
-  return <QueryClientProvider client={queryClient}><TooltipProvider><WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}><RoutedErrorBoundary><Router /></RoutedErrorBoundary></WouterRouter><Toaster /></TooltipProvider></QueryClientProvider>;
+  if (!clerkPubKey) throw new Error('Missing VITE_CLERK_PUBLISHABLE_KEY.');
+  return <WouterRouter base={basePath}><ClerkProvider publishableKey={clerkPubKey} proxyUrl={clerkProxyUrl} appearance={clerkAppearance} signInUrl={`${basePath}/sign-in`} signUpUrl={`${basePath}/sign-up`} routerPush={(to) => window.history.pushState({}, '', to)} routerReplace={(to) => window.history.replaceState({}, '', to)}><QueryClientProvider client={queryClient}><ClerkQueryClientCacheInvalidator /><TooltipProvider><RoutedErrorBoundary><Router /></RoutedErrorBoundary><Toaster /></TooltipProvider></QueryClientProvider></ClerkProvider></WouterRouter>;
 }
 
 export default App;
