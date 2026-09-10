@@ -48,6 +48,15 @@ The product should remain dark, dense, monospace-forward, and focused on debuggi
 - Run API codegen after changing `lib/api-spec/openapi.yaml`.
 - Restart the managed API and web workflows after backend or frontend changes.
 
+## Snapshot cleanup operator alerts
+
+- After each cleanup run (including failed runs), the API checks aggregate queue health. It emits `snapshot_cleanup_alert` at warning level when any item reaches 3 failed deletion attempts or the oldest pending item reaches 24 hours.
+- These are structured server-log notifications, not email or chat messages. Monitor `notificationChannel=operator`, `component=snapshot_cleanup`, and `event=snapshot_cleanup_alert` in your log alerting system. No external delivery destination is configured by the app.
+- An unchanged unhealthy condition is silent on subsequent hourly runs. A newly triggered reason emits another alert. `snapshot_cleanup_recovered` at info level signals that no persistent failures remain and queue age is below 24 hours (the queue need not be empty).
+- A failed status read emits `snapshot_cleanup_health_unavailable` once; successful reads resume with `snapshot_cleanup_health_restored`. Failed reads never count as queue recovery.
+- Deduplication is in memory per API process: restarts re-announce existing incidents, and separate API instances can each notify. This is not durable or cross-instance deduplication.
+- Operator events remain enabled at info/warn even if the general `LOG_LEVEL` is more restrictive. Notification payloads contain only aggregate counts, ages, and fixed reason/event names; no object keys or raw storage errors.
+
 ## Pointers
 
 - See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details

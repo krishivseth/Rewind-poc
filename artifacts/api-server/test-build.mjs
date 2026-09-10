@@ -6,10 +6,11 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 const pgEntry = path.resolve(root, "../../lib/db/node_modules/pg/esm/index.mjs");
 const outdir = path.join(root, "test/.generated");
 await build({
-  entryPoints: [
-    path.join(root, "test/test-support.ts"),
-    path.join(root, "test/route-test-support.ts"),
-  ],
+  entryPoints: {
+    "test-support": path.join(root, "test/test-support.ts"),
+    "route-test-support": path.join(root, "test/route-test-support.ts"),
+    "cleanup-alerts": path.join(root, "src/lib/cleanup-alerts.ts"),
+  },
   outdir,
   outExtension: { ".js": ".mjs" },
   bundle: true,

@@ -18,3 +18,10 @@ export const logger = pino({
         },
       }),
 });
+
+// Keep operator warnings and recovery events observable even when routine
+// application logging is restricted to errors. Route by the event field.
+export const operatorLogger = logger.child(
+  { notificationChannel: "operator", component: "snapshot_cleanup" },
+  { level: "info" },
+);

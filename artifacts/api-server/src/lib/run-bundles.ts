@@ -2,7 +2,8 @@ import { and, asc, eq, inArray, isNotNull, isNull, lte, notInArray, or, sql } fr
 import { branches, bundleCleanupQueue, bundleUploadIntents, db, sessions, steps } from "@workspace/db";
 import { deleteBundle } from "./bundle-storage";
 import { reconcileBundleUploads } from "./bundle-upload-intents";
-import { logger } from "./logger";
+import { logger, operatorLogger } from "./logger";
+import { createCleanupMonitor } from "./cleanup-alerts";
 
 export const SESSION_RETENTION_DAYS = 30;
 const CLEANUP_BATCH_SIZE = 25;
@@ -176,6 +177,7 @@ export async function getBundleCleanupStatus(now = new Date()) {
 }
 
 let cleanupPromise: Promise<void> | null = null;
+const checkCleanupHealth = createCleanupMonitor(getBundleCleanupStatus, operatorLogger);
 
 export function runBundleCleanup(now = new Date()) {
   if (cleanupPromise) return cleanupPromise;
@@ -196,8 +198,14 @@ export function runBundleCleanup(now = new Date()) {
     });
   })()
     .catch((error) => logger.error({ err: error }, "Run bundle cleanup failed"))
-    .finally(() => {
-      cleanupPromise = null;
+    .finally(async () => {
+      try {
+        // Check even when reconciliation/sweeping fails, and use a fresh clock
+        // rather than the cleanup run's (potentially old) start time.
+        await checkCleanupHealth();
+      } finally {
+        cleanupPromise = null;
+      }
     });
   return cleanupPromise;
 }
