@@ -17,6 +17,7 @@ const DESCRIPTIONS: Record<string, string> = {
   "tiny-todo": "Flask todo API with an in-memory store and pytest tests.",
   "csv-stats": "CLI that prints CSV column statistics. Two bugs, two failing tests.",
   "rate-limiter": "Thread-safe token bucket with a concurrency bug and a failing test.",
+  blank: "Empty Python project with pytest. Start from nothing.",
 };
 
 /** Bundle every directory under seed_repos/ into storage and register it, if missing. */

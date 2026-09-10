@@ -126,6 +126,7 @@ the cheap one and is used by the seed script.
 - **tiny-todo**: a Flask todo API with tests. Task: add a DELETE route with a test.
 - **csv-stats**: a CSV statistics CLI with two deliberate bugs and two failing tests.
 - **rate-limiter**: a token bucket with a check-then-act race and a failing concurrency test.
+- **blank**: an empty Python project with pytest, for tasks that build something from scratch.
 
 Each has a `.rewind.json` naming the only commands the agent may run.
 
