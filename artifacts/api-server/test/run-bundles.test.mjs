@@ -9,6 +9,7 @@ const bundleDir = await mkdtemp(path.join(tmpdir(), "rewind-retention-"));
 process.env.REWIND_LOCAL_BUNDLE_DIR = bundleDir;
 const {
   drainBundleCleanupQueue,
+  getBundleCleanupStatus,
   pool,
   reconcileAbandonedRuns,
   retireEligibleSessions,
@@ -215,4 +216,33 @@ test("failed bundle deletions stay queued and a later retry succeeds", async () 
     [bundleKey],
   );
   assert.equal(retried.rowCount, 0);
+});
+
+test("cleanup status separates retry backoff from persistent failures without exposing keys", async () => {
+  const now = new Date();
+  const queuedAt = new Date(now.getTime() - 20 * 60_000);
+  const queueItems = [
+    { key: `/objects/rewind/bundles/${crypto.randomUUID()}/new.bundle`, attempts: 0 },
+    { key: `/objects/rewind/bundles/${crypto.randomUUID()}/retry.bundle`, attempts: 1 },
+    { key: `/objects/rewind/bundles/${crypto.randomUUID()}/persistent.bundle`, attempts: 3 },
+  ];
+  queueItems.forEach(({ key }) => fixtureIds.bundles.add(key));
+  for (const item of queueItems) {
+    await pool.query(
+      `insert into bundle_cleanup_queue (bundle_key, attempts, created_at)
+       values ($1, $2, $3)`,
+      [item.key, item.attempts, queuedAt],
+    );
+  }
+
+  const status = await getBundleCleanupStatus(now);
+
+  assert.ok(status.pendingCount >= 3);
+  assert.ok(status.retryBackoffCount >= 1);
+  assert.ok(status.persistentFailureCount >= 1);
+  assert.equal(status.persistentFailureThreshold, 3);
+  assert.equal(status.state, "persistent_failures");
+  assert.ok(status.oldestQueuedAgeSeconds >= 20 * 60);
+  const serialized = JSON.stringify(status);
+  queueItems.forEach(({ key }) => assert.equal(serialized.includes(key), false));
 });

@@ -12,7 +12,7 @@ import {
 } from "@workspace/api-zod";
 import { branches, db, repos, sessions, steps } from "@workspace/db";
 import { runCodingAgent } from "../lib/openrouter";
-import { runBundleCleanup, sessionExpiry } from "../lib/run-bundles";
+import { getBundleCleanupStatus, runBundleCleanup, sessionExpiry } from "../lib/run-bundles";
 import { logger } from "../lib/logger";
 import { checkpointAtStep, checkpointFromStep } from "../lib/exact-fork";
 
@@ -324,6 +324,10 @@ async function runBranch(branchId: string, signal: AbortSignal) {
 router.get("/repos", async (_req, res) => {
   const rows = await db.select().from(repos).orderBy(asc(repos.name));
   res.json(rows.map(({ id, slug, name, description }) => ({ id, slug, name, description })));
+});
+
+router.get("/ops/bundle-cleanup", async (_req, res) => {
+  res.json(await getBundleCleanupStatus());
 });
 
 router.get("/sessions", async (_req, res) => {

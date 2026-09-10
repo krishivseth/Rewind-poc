@@ -6,6 +6,7 @@ import { logger } from "./logger";
 export const SESSION_RETENTION_DAYS = 30;
 const CLEANUP_BATCH_SIZE = 25;
 const RETRY_DELAY_MS = 5 * 60 * 1000;
+export const PERSISTENT_CLEANUP_FAILURE_ATTEMPTS = 3;
 
 export function sessionExpiry(from = new Date()) {
   return new Date(from.getTime() + SESSION_RETENTION_DAYS * 24 * 60 * 60 * 1000);
@@ -133,6 +134,40 @@ export async function drainBundleCleanupQueue(now: Date) {
       logger.error({ err: error, bundleKey: item.bundleKey, attempts: item.attempts + 1 }, "Bundle cleanup failed");
     }
   }
+}
+
+export async function getBundleCleanupStatus(now = new Date()) {
+  const [status] = await db
+    .select({
+      pendingCount: sql<number>`count(*)::int`,
+      oldestQueuedAt: sql<Date | string | null>`min(${bundleCleanupQueue.createdAt})`,
+      retryBackoffCount: sql<number>`count(*) filter (
+        where ${bundleCleanupQueue.attempts} > 0
+          and ${bundleCleanupQueue.attempts} < ${PERSISTENT_CLEANUP_FAILURE_ATTEMPTS}
+      )::int`,
+      persistentFailureCount: sql<number>`count(*) filter (
+        where ${bundleCleanupQueue.attempts} >= ${PERSISTENT_CLEANUP_FAILURE_ATTEMPTS}
+      )::int`,
+    })
+    .from(bundleCleanupQueue);
+  const oldestQueuedAtValue = status?.oldestQueuedAt ?? null;
+  const oldestQueuedAt = oldestQueuedAtValue instanceof Date
+    ? oldestQueuedAtValue
+    : oldestQueuedAtValue
+      ? new Date(oldestQueuedAtValue)
+      : null;
+
+  return {
+    pendingCount: status?.pendingCount ?? 0,
+    oldestQueuedAt: oldestQueuedAt?.toISOString() ?? null,
+    oldestQueuedAgeSeconds: oldestQueuedAt
+      ? Math.max(0, Math.floor((now.getTime() - oldestQueuedAt.getTime()) / 1000))
+      : null,
+    retryBackoffCount: status?.retryBackoffCount ?? 0,
+    persistentFailureCount: status?.persistentFailureCount ?? 0,
+    persistentFailureThreshold: PERSISTENT_CLEANUP_FAILURE_ATTEMPTS,
+    state: (status?.persistentFailureCount ?? 0) > 0 ? "persistent_failures" : "normal",
+  };
 }
 
 let cleanupPromise: Promise<void> | null = null;
