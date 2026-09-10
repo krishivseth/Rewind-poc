@@ -43,3 +43,5 @@ export function fmtDuration(startIso: string, endIso: string | null): string {
   const s = Math.max(0, Math.round((end - new Date(startIso).getTime()) / 1000))
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`
 }
+
+export const fmtCost = (usd: number | undefined) => (usd === undefined ? '' : usd < 0.01 ? `$${usd.toFixed(4)}` : `$${usd.toFixed(2)}`)

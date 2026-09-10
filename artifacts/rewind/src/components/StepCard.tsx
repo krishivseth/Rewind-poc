@@ -61,7 +61,7 @@ export default function StepCard({ step, onOpenContext }: { step: Step; onOpenCo
           {KIND_LABEL[step.kind]}
         </span>
         {step.kind === 'assistant' && (
-          <span className="mono flex gap-3"><span>{fmtTokens(step.input_tokens)} in</span><span>{fmtTokens(step.output_tokens)} out</span><span>{step.latency_ms} ms</span></span>
+          <span className="mono flex gap-3 whitespace-nowrap"><span>{fmtTokens(step.input_tokens)} in</span><span>{fmtTokens(step.output_tokens)} out</span><span className="hidden xl:inline">{step.latency_ms} ms</span></span>
         )}
         {step.kind === 'tool_result' && step.latency_ms > 0 && <span className="mono">{step.latency_ms} ms</span>}
         {step.commit_hash && (

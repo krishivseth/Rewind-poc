@@ -3,7 +3,7 @@ import { useMemo } from 'react'
 import { api, type Branch, type Step } from '../api'
 import { forkLabels } from '../lib/cache'
 import { firstDivergence } from '../lib/compare'
-import { KIND_COLOR, fmtTokens, shortModel, stepTitle } from '../lib/steps'
+import { KIND_COLOR, fmtCost, fmtTokens, shortModel, stepTitle } from '../lib/steps'
 import StatusBadge from './StatusBadge'
 
 interface Props {
@@ -11,13 +11,14 @@ interface Props {
   forks: Branch[]
   all: Branch[]
   onPick: (branchId: string, step: number) => void
+  onFork: (branchId: string, step: number) => void
   onExit: () => void
 }
 
 const TICK = 14
 
 /** Every fork of one parent, one row each, ticks aligned by step index, first divergence marked. */
-export default function CompareView({ parent, forks, all, onPick, onExit }: Props) {
+export default function CompareView({ parent, forks, all, onPick, onFork, onExit }: Props) {
   const queries = useQueries({ queries: forks.map((f) => ({ queryKey: ['steps', f.id], queryFn: () => api.steps(f.id) })) })
   const trajectories = queries.map((q) => q.data ?? [])
   const ready = queries.every((q) => q.isSuccess)
@@ -41,7 +42,7 @@ export default function CompareView({ parent, forks, all, onPick, onExit }: Prop
         <div className="p-3 space-y-1 min-w-max">
           {/* shared axis */}
           <div className="flex items-center gap-3">
-            <div className="w-[240px] shrink-0" />
+            <div className="w-[320px] shrink-0" />
             <div className="relative flex" style={{ width: longest * TICK }}>
               {Array.from({ length: longest }).map((_, i) => (
                 <div key={i} className="text-[9px] mono text-faint text-center" style={{ width: TICK }}>{i % 5 === 0 ? i : ''}</div>
@@ -52,11 +53,11 @@ export default function CompareView({ parent, forks, all, onPick, onExit }: Prop
             const steps = trajectories[r]
             return (
               <div key={f.id} className="flex items-center gap-3">
-                <div className="w-[240px] shrink-0 flex items-center gap-2 text-[12px]">
+                <div className="w-[320px] shrink-0 flex items-center gap-2 text-[12px] whitespace-nowrap">
                   <StatusBadge branch={f} compact />
                   <span className="mono text-ink">{labels.get(f.id) ?? shortModel(f.model_id)}</span>
                   <span className="mono text-muted truncate">{shortModel(f.model_id)}</span>
-                  <span className="mono text-faint ml-auto">{fmtTokens(f.total_input_tokens + f.total_output_tokens)}</span>
+                  <span className="mono text-faint ml-auto">{fmtTokens(f.total_input_tokens + f.total_output_tokens)}{f.est_cost_usd ? ` ${fmtCost(f.est_cost_usd)}` : ''}</span>
                 </div>
                 <div className="relative flex items-end h-6" style={{ width: longest * TICK }}>
                   {steps.map((s: Step) => {
@@ -107,7 +108,8 @@ export default function CompareView({ parent, forks, all, onPick, onExit }: Prop
                           </button>
                         ) : <span className="text-faint">already finished ({trajectories[r].length} steps)</span>}
                       </td>
-                      <td className="py-1.5 text-muted whitespace-nowrap"><StatusBadge branch={f} /> <span className="mono ml-2">{f.step_count} steps</span></td>
+                      <td className="py-1.5 text-muted whitespace-nowrap"><StatusBadge branch={f} /> <span className="mono ml-2">{f.step_count} steps</span>{f.est_cost_usd ? <span className="mono ml-2 text-faint">{fmtCost(f.est_cost_usd)}</span> : null}</td>
+                      <td className="py-1.5 pl-3"><button className="btn btn-accent" onClick={() => onFork(f.id, divergence)} title="Fork this branch at the divergence step, with any model">Fork here</button></td>
                     </tr>
                   )
                 })}

@@ -225,7 +225,20 @@ export async function drainBundleCleanupQueue(): Promise<number> {
   return n;
 }
 
+export async function sessionTokens(sessionId: string): Promise<number> {
+  const [row] = await db.select({ t: sql<string>`coalesce(sum(${branches.totalInputTokens} + ${branches.totalOutputTokens}), 0)` }).from(branches).where(eq(branches.sessionId, sessionId));
+  return Number(row?.t ?? 0);
+}
+
 export async function stats() {
   const [row] = await db.select({ n: sql<number>`count(*)::int` }).from(branches);
-  return { tokens_used_today: await tokensUsedToday(), daily_token_cap: settings.dailyTokenCap, branches: row?.n ?? 0, max_concurrent_branches: settings.maxConcurrentBranches, sandbox_python: sandboxPythonStatus() };
+  const py = sandboxPythonStatus();
+  return {
+    tokens_used_today: await tokensUsedToday(), daily_token_cap: settings.dailyTokenCap, branches: row?.n ?? 0,
+    max_concurrent_branches: settings.maxConcurrentBranches, session_token_budget: settings.maxTotalTokensPerSession,
+    sandbox_python: py, storage_backend: process.env.PRIVATE_OBJECT_DIR ? "object" : "local",
+    read_only: settings.readOnly,
+    // what a visitor can do right now, and why not
+    writes: settings.readOnly ? "read_only" : !py.ready ? "warming_up" : "open",
+  };
 }

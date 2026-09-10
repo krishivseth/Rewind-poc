@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import type { Branch } from '../api'
 import { forkLabels } from '../lib/cache'
-import { shortModel } from '../lib/steps'
+import { fmtCost, shortModel } from '../lib/steps'
 import StatusBadge from './StatusBadge'
 
 interface Props {
@@ -51,12 +51,18 @@ export default function BranchTree({ branches, selected, diffOther, onSelect, on
         >
           <span className="flex items-center gap-2 w-full">
             <StatusBadge branch={b} compact />
-            <span className="mono text-[12px] text-ink truncate">{shortModel(b.model_id)}</span>
-            {labels.get(b.id) && <span className="mono text-[11px] text-muted shrink-0">{labels.get(b.id)}</span>}
-            {isOther && <span className="ml-auto text-[10px] mono" style={{ color: 'var(--color-k-call)' }}>B</span>}
-            {isSel && <span className="ml-auto text-[10px] mono text-accent">A</span>}
+            {labels.get(b.id) ? (
+              <><span className="mono text-[12px] text-ink shrink-0">{labels.get(b.id)}</span><span className="mono text-[11px] text-muted truncate">{shortModel(b.model_id)}</span></>
+            ) : (
+              <span className="mono text-[12px] text-ink truncate">{shortModel(b.model_id)}</span>
+            )}
+            <span className="ml-auto flex items-center gap-2 shrink-0">
+              {b.est_cost_usd !== undefined && b.est_cost_usd > 0 && <span className="mono text-[10px] text-faint">{fmtCost(b.est_cost_usd)}</span>}
+              {isOther && <span className="text-[10px] mono" style={{ color: 'var(--color-k-call)' }}>B</span>}
+              {isSel && <span className="text-[10px] mono text-accent">A</span>}
+            </span>
           </span>
-          <span className="flex items-center gap-2 text-[11px] text-muted w-full">
+          <span className="flex items-center gap-2 text-[11px] text-muted w-full whitespace-nowrap">
             <StatusBadge branch={b} />
             <span className="mono">{b.step_count} steps</span>
             {b.fork_step_index !== null && <span className="mono text-faint">at {b.fork_step_index}</span>}

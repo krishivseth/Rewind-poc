@@ -10,6 +10,7 @@ import { publish, subscribe } from "../lib/pubsub";
 import * as scheduler from "../lib/scheduler";
 import * as services from "../lib/services";
 import { requireKey, takeBranchQuota, validKey } from "../middlewares/access-key";
+import { sandboxPythonStatus } from "../lib/sandbox-python";
 
 const router: IRouter = Router();
 const TERMINAL = new Set(["done", "failed", "cancelled"]);
@@ -130,6 +131,8 @@ const ForkBody = z.object({ step_index: z.number().int().min(0), model_id: model
 const NoteBody = z.object({ note: z.string().max(2000).nullish() });
 
 async function checkDailyCap() {
+  if (settings.readOnly) throw new HttpError(503, "This deployment is read-only; sessions and forks cannot be created.");
+  if (!sandboxPythonStatus().ready) throw new HttpError(503, "The sandbox is still warming up after a restart. Try again in a minute.");
   const used = await services.tokensUsedToday();
   if (used >= settings.dailyTokenCap) throw new HttpError(429, `daily token cap reached (${used} of ${settings.dailyTokenCap}); try again tomorrow`);
 }
@@ -151,6 +154,8 @@ router.post("/branches/:id/fork", requireKey, wrap(async (req, res) => {
   const parent = await loadBranch(req.params.id as string);
   const body = ForkBody.parse(req.body);
   await checkDailyCap();
+  const spent = await services.sessionTokens(parent.sessionId);
+  if (spent >= settings.maxTotalTokensPerSession) throw new HttpError(429, `this session has used ${spent} tokens, over its budget of ${settings.maxTotalTokensPerSession}; start a new session`);
   quota(req, res, body.count);
   let ids: string[];
   try { ids = await createForks(parent.id, body.step_index, body.model_id, body.edited_task_prompt ?? null, body.count, res.locals.keyId as string); }

@@ -10,6 +10,7 @@ import { FakeModelClient, setClient, type Completion, type ModelClient } from ".
 import { cheapestModel, settings } from "../src/lib/config";
 import * as scheduler from "../src/lib/scheduler";
 import { branchLimiter } from "../src/middlewares/access-key";
+import { sandboxPythonStatus, setSandboxBin } from "../src/lib/sandbox-python";
 import { closeDb, python, resetDb, seedRepo } from "./support";
 
 const KEY = { "X-Rewind-Key": "test-key" };
@@ -196,8 +197,9 @@ test("loop detection", async () => {
   const b = await waitDone(r.data.root_branch_id);
   assert.equal(b.status, "failed"); assert.match(b.error, /stuck in a loop/);
   const results = ((await get(`/api/branches/${b.id}/steps`)).data as Array<{ kind: string; tool_result: string }>).filter((s) => s.kind === "tool_result");
-  assert.equal(results.length, settings.loopFailAfter);
-  assert.match(results[settings.loopWarnAfter - 1]!.tool_result, /\[rewind\]/);
+  // the test command fails every time, so the branch ends one attempt early
+  assert.equal(results.length, settings.loopFailAfter - 1);
+  assert.ok(results.some((r) => /\[rewind\].*failed each time/.test(r.tool_result)));
   assert.doesNotMatch(results[0]!.tool_result, /\[rewind\]/);
 });
 
@@ -217,6 +219,29 @@ test("twenty concurrent branches", async () => {
   const queued = sess.branches.filter((b: { status: string }) => b.status === "queued");
   assert.ok(queued.length > 0); assert.ok(queued.every((b: { queue_position?: number }) => b.queue_position));
   for (const id of ids) assert.equal((await waitDone(id, 120_000)).status, "done");
+});
+
+test("writes are gated while warming up, in read-only mode, and over the session budget", async () => {
+  const bin = sandboxPythonStatus().bin;
+  setSandboxBin(null);
+  let r = await newSession();
+  assert.equal(r.status, 503); assert.match(r.data.detail, /warming up/);
+  setSandboxBin(bin);
+  settings.readOnly = true;
+  r = await newSession();
+  assert.equal(r.status, 503); assert.match(r.data.detail, /read-only/);
+  assert.equal((await get("/api/stats")).data.writes, "read_only");
+  settings.readOnly = false;
+  assert.equal((await get("/api/stats")).data.writes, "open");
+
+  r = await newSession();
+  const root = r.data.root_branch_id as string;
+  await waitDone(root);
+  settings.maxTotalTokensPerSession = 100;
+  const f = await j("POST", `/api/branches/${root}/fork`, { step_index: 3, model_id: cheapestModel().id }, KEY);
+  assert.equal(f.status, 429); assert.match(f.data.detail, /budget/);
+  settings.maxTotalTokensPerSession = 300_000;
+  assert.ok((await get(`/api/branches/${root}`)).data.est_cost_usd >= 0);
 });
 
 test("fake client sanity", () => { assert.ok(new FakeModelClient([])); });

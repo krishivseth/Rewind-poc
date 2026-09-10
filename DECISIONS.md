@@ -98,3 +98,20 @@ Choices the spec left open, and what this codebase does about them.
     components and behaviour are the port's.
 33. **A remembered pane width is ignored** when it would leave the centre pane under 800px of room;
     the default split applies instead. Narrow windows never lose the scrubber.
+
+## After the first Replit deploy
+
+34. **Writes wait for the sandbox.** The venv builds after boot; until it is ready, session and fork
+    requests return 503 "warming up" and the UI disables the buttons, instead of recording runs
+    whose every test command fails.
+35. **Sandbox pip uses the public index** with the host's pip config ignored: Replit's workspace pip
+    points at an internal proxy the deployment VM cannot resolve. pip itself is bootstrapped from
+    ensurepip or get-pip.py because Nix pythons ship without it.
+36. **Identical failures end a loop one call earlier** than identical successes (3 vs 4): a failing
+    command repeated verbatim has no chance of a different outcome.
+37. **Per-session token budget** (300k) caps a runaway five-way fork without touching the daily cap.
+38. **Read-only mode** (`REWIND_READ_ONLY=1`) is how the deployment stays public after the demo.
+39. **Cost estimates** (`est_cost_usd`, from the model's list price) show on tree nodes, the top bar
+    and the compare table. The compare table offers "Fork here" at the divergence step.
+40. **Legacy bundle keys** from the first version (`/objects/rewind/bundles/...`) resolve to their
+    old bucket path so those branches can still be opened and deleted.

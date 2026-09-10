@@ -10,6 +10,7 @@ export default function ForkPopover({ branch, stepIndex, onClose }: Props) {
   const key = useAuth((s) => s.key)
   const qc = useQueryClient()
   const models = useQuery({ queryKey: ['models'], queryFn: api.models })
+  const stats = useQuery({ queryKey: ['stats'], queryFn: api.stats })
   const [model, setModel] = useState(branch.model_id)
   const [prompt, setPrompt] = useState(branch.task_prompt)
   const [count, setCount] = useState(1)
@@ -80,9 +81,11 @@ export default function ForkPopover({ branch, stepIndex, onClose }: Props) {
               </div>
               <span className="text-[11px] text-faint">{count > 1 ? 'same model and prompt, run side by side' : ''}</span>
             </div>
+            {stats.data?.writes === 'warming_up' && <p className="text-[12px] text-k-call">The sandbox is still warming up after a restart. Try again in about a minute.</p>}
+            {stats.data?.writes === 'read_only' && <p className="text-[12px] text-muted">This deployment is read-only.</p>}
             {fork.error && <p className="text-[12px] text-bad">{(fork.error as Error).message}</p>}
             <div className="flex items-center gap-2">
-              <button className="btn btn-accent" disabled={fork.isPending || !prompt.trim()}>{fork.isPending ? 'Forking…' : `Fork ${count > 1 ? `×${count}` : ''}`}</button>
+              <button className="btn btn-accent" disabled={fork.isPending || !prompt.trim() || (stats.data?.writes !== undefined && stats.data.writes !== 'open')}>{fork.isPending ? 'Forking…' : `Fork ${count > 1 ? `×${count}` : ''}`}</button>
               <span className="text-[11px] text-faint">Each copy runs up to 30 model calls.</span>
             </div>
           </form>

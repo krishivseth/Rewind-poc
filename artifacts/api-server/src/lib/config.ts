@@ -55,6 +55,8 @@ export const settings = {
   sandboxMaxMemoryMb: num("SANDBOX_MAX_MEMORY_MB", 2048),
   sandboxUnshareNet: (process.env.SANDBOX_UNSHARE_NET ?? "1") !== "0",
   leaseSeconds: num("RUN_LEASE_SECONDS", 900),
+  maxTotalTokensPerSession: num("MAX_TOTAL_TOKENS_PER_SESSION", 300_000),
+  readOnly: (process.env.REWIND_READ_ONLY ?? "0") === "1",
 };
 
 export interface Model {

@@ -16,6 +16,7 @@ export interface Branch {
   total_input_tokens: number
   total_output_tokens: number
   bundle_key: string | null
+  est_cost_usd?: number
   created_at: string
   finished_at: string | null
   queue_position?: number
@@ -44,7 +45,7 @@ export interface SearchHit {
   session_id: string; session_title: string; repo_slug: string; branch_id: string; model_id: string
   branch_status: BranchStatus; step_index: number; kind: StepKind; tool_name: string | null; snippet: string
 }
-export interface Stats { tokens_used_today: number; daily_token_cap: number; branches: number; max_concurrent_branches: number }
+export interface Stats { tokens_used_today: number; daily_token_cap: number; branches: number; max_concurrent_branches: number; session_token_budget?: number; storage_backend?: 'object' | 'local'; read_only?: boolean; writes?: 'open' | 'warming_up' | 'read_only'; sandbox_python?: { ready: boolean; bin: string | null; error: string | null } }
 
 export interface SessionSummary {
   id: string; title: string; repo_slug: string; repo_id: string; root_branch_id: string | null

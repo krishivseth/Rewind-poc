@@ -9,6 +9,7 @@ export default function NewSessionForm({ onClose }: { onClose: () => void }) {
   const key = useAuth((s) => s.key)
   const repos = useQuery({ queryKey: ['repos'], queryFn: api.repos })
   const models = useQuery({ queryKey: ['models'], queryFn: api.models })
+  const stats = useQuery({ queryKey: ['stats'], queryFn: api.stats })
   const [repoId, setRepoId] = useState('')
   const [modelId, setModelId] = useState('')
   const [task, setTask] = useState('')
@@ -61,9 +62,11 @@ export default function NewSessionForm({ onClose }: { onClose: () => void }) {
               <span className="text-[11px] text-muted">Title <span className="text-faint">optional</span></span>
               <input className="field" value={title} onChange={(e) => setTitle(e.target.value)} placeholder={repo && task ? `${repo.slug}: ${task.slice(0, 60)}` : ''} />
             </label>
+            {stats.data?.writes === 'warming_up' && <p className="text-[12px] text-k-call">The sandbox is still warming up after a restart. Try again in about a minute.</p>}
+            {stats.data?.writes === 'read_only' && <p className="text-[12px] text-muted">This deployment is read-only.</p>}
             {create.error && <p className="text-[12px] text-bad">{(create.error as Error).message}</p>}
             <div className="flex items-center gap-3">
-              <button className="btn btn-accent" disabled={create.isPending || !repo || !task.trim()}>{create.isPending ? 'Starting…' : 'Start session'}</button>
+              <button className="btn btn-accent" disabled={create.isPending || !repo || !task.trim() || (stats.data?.writes !== undefined && stats.data.writes !== 'open')}>{create.isPending ? 'Starting…' : 'Start session'}</button>
               <span className="text-[11px] text-faint">Runs up to 30 model calls, then stops. Fork it from any step afterwards.</span>
             </div>
           </form>

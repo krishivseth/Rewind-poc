@@ -14,6 +14,8 @@ export default function TopBar({ children }: { children?: ReactNode }) {
         <span className="inline-block h-2 w-2 bg-accent" />rewind
       </Link>
       {children}
+      {s?.writes === 'warming_up' && <span className="mono text-[10px] uppercase tracking-wider text-k-call" title={s.sandbox_python?.error ?? ''}>sandbox warming up</span>}
+      {s?.writes === 'read_only' && <span className="mono text-[10px] uppercase tracking-wider text-muted">read-only</span>}
       {s && (
         <span className="mono text-[11px] text-faint flex items-center gap-2 shrink-0" title={`${s.tokens_used_today.toLocaleString()} of ${s.daily_token_cap.toLocaleString()} tokens spent today`}>
           <span className="inline-block h-1.5 w-16 rounded-sm bg-line overflow-hidden">

@@ -117,6 +117,12 @@ pnpm --filter @workspace/rewind test         # 9 unit tests on the frontend's pu
 | `TOOL_OUTPUT_LIMIT` | 20000 | Tool output truncation, in characters |
 | `SANDBOX_MAX_FILE_MB` / `SANDBOX_MAX_PROCS` / `SANDBOX_MAX_MEMORY_MB` | 64 / 256 / 2048 | `ulimit` on the sandbox shell (memory limit Linux only) |
 | `RUN_LEASE_SECONDS` | 900 | A branch whose lease lapses is failed by the sweep |
+| `MAX_TOTAL_TOKENS_PER_SESSION` | 300000 | Forks are refused and running branches fail once a session's branches have spent this much |
+| `REWIND_READ_ONLY` | 0 | `1` refuses every write; leave a deployment public without spending credits |
+
+Writes are also refused with a 503 while the sandbox venv is still building after a restart; the UI
+shows "sandbox warming up" until `/api/stats` reports `writes: "open"`. On the smallest Replit VM
+set `MAX_CONCURRENT_BRANCHES=2`; four pytest runs on a shared CPU crawl.
 
 Models live in `artifacts/api-server/src/lib/config.ts`. Five OpenRouter models; DeepSeek V4 Flash is
 the cheap one and is used by the seed script.

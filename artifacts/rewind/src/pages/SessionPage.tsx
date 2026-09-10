@@ -17,7 +17,7 @@ import FileViewer from '../components/FileViewer'
 import Scrubber from '../components/Scrubber'
 import StepCard from '../components/StepCard'
 import TopBar from '../components/TopBar'
-import { fmtTokens, shortModel } from '../lib/steps'
+import { fmtCost, fmtTokens, shortModel } from '../lib/steps'
 import { useSelection } from '../store'
 
 export default function SessionPage() {
@@ -142,7 +142,7 @@ export default function SessionPage() {
   if (!session) return <Shell title="Session"><p className="p-4 text-muted">Loading…</p></Shell>
 
   return (
-    <Shell title={session.title} subtitle={session.repo_slug} branch={branch ? `${shortModel(branch.model_id)}   ${fmtTokens(branch.total_input_tokens + branch.total_output_tokens)} tokens` : undefined}
+    <Shell title={session.title} subtitle={session.repo_slug} branch={branch ? `${shortModel(branch.model_id)}   ${fmtTokens(branch.total_input_tokens + branch.total_output_tokens)} tokens${branch.est_cost_usd ? `   ${fmtCost(branch.est_cost_usd)}` : ''}` : undefined}
       extra={<DeleteSession sessionId={session.id} branchCount={branches.length} compact />}>
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         {/* left: branches */}
@@ -174,7 +174,9 @@ export default function SessionPage() {
           )}
           {compareParent && compareForks.length > 1 ? (
             <CompareView parent={compareParent} forks={compareForks} all={branches}
-              onPick={(bid, i) => { sel.selectBranch(bid); sel.setStep(i) }} onExit={() => sel.setCompareParent(null)} />
+              onPick={(bid, i) => { sel.selectBranch(bid); sel.setStep(i) }}
+              onFork={(bid, i) => { sel.selectBranch(bid); sel.setStep(i); sel.setForkOpen(true) }}
+              onExit={() => sel.setCompareParent(null)} />
           ) : sel.diffMode && branch && other ? (
             <DiffView a={branch} aSteps={steps} aIndex={Math.max(0, index)} b={other} bIndex={sel.diffOtherStep} onBIndex={sel.setDiffOtherStep} onExit={() => sel.setDiffMode(false)} />
           ) : sel.diffMode && branch ? (

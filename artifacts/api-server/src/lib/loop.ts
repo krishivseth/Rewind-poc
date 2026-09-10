@@ -23,6 +23,7 @@ export function branchView(b: Branch, queuePosition: number | null = null): Reco
     id: b.id, session_id: b.sessionId, parent_branch_id: b.parentBranchId, fork_step_index: b.forkStepIndex,
     model_id: b.modelId, task_prompt: b.taskPrompt, status: b.status, error: b.error, step_count: b.stepCount,
     total_input_tokens: b.totalInputTokens, total_output_tokens: b.totalOutputTokens, bundle_key: b.bundleKey,
+    est_cost_usd: Number(estimateCostUsd(b.modelId, b.totalInputTokens, b.totalOutputTokens).toFixed(4)),
     created_at: b.createdAt.toISOString(), finished_at: b.finishedAt?.toISOString() ?? null,
     ...(queuePosition !== null ? { queue_position: queuePosition } : {}),
   };
@@ -101,6 +102,10 @@ export async function runBranch(branchId: string, client?: ModelClient): Promise
     let totalTokens = branch.totalInputTokens + branch.totalOutputTokens;
     let repeats: string[] = [];
 
+    const sessionTokens = async () => {
+      const [row] = await db.select({ t: sql<string>`coalesce(sum(${branches.totalInputTokens} + ${branches.totalOutputTokens}), 0)` }).from(branches).where(eq(branches.sessionId, branch.sessionId));
+      return Number(row?.t ?? 0);
+    };
     const checkLimits = (phase: string) => {
       if (cancelled.has(branchId)) throw new BranchStop("cancelled", `cancelled before ${phase}`);
       if (Date.now() - started > settings.wallClockSecondsPerBranch * 1000) throw new BranchStop("failed", `wall clock limit ${settings.wallClockSecondsPerBranch}s hit`);
@@ -110,6 +115,7 @@ export async function runBranch(branchId: string, client?: ModelClient): Promise
     for (;;) {
       checkLimits("model call");
       if (turns >= settings.maxModelCalls) throw new BranchStop("failed", `max steps ${settings.maxModelCalls} hit`);
+      if ((await sessionTokens()) >= settings.maxTotalTokensPerSession) throw new BranchStop("failed", `session token budget ${settings.maxTotalTokensPerSession} hit`);
       const t0 = Date.now();
       const completion = await model.complete(branch.modelId, messages, tools.TOOL_SCHEMAS as unknown as unknown[], settings.maxOutputTokensPerCall);
       turns += 1;
@@ -151,12 +157,15 @@ export async function runBranch(branchId: string, client?: ModelClient): Promise
           kind: "tool_result", content: { role: "tool", tool_call_id: tc.id, content: o }, toolName: name, toolArgs: args,
           toolResult: o, commitHash, filesChanged, latencyMs: Date.now() - t1,
         });
-        if (repeats.length >= settings.loopFailAfter) {
+        // a call that keeps failing identically gets one fewer chance than one that keeps succeeding
+        const failed = !outcome.ok || /exit code: (?!0\b)/.test(outcome.output);
+        const failAfter = failed ? Math.max(2, settings.loopFailAfter - 1) : settings.loopFailAfter;
+        if (repeats.length >= failAfter) {
           await record(output);
           throw new BranchStop("failed", `stuck in a loop: ${name} was called with the same arguments ${repeats.length} times in a row`);
         }
-        if (repeats.length >= settings.loopWarnAfter) {
-          output += `\n\n[rewind] You have made this exact call ${repeats.length} times in a row. Repeating it again will end the run. Do something different: read a file you have not read, make an edit, or finish with a summary.`;
+        if (repeats.length >= failAfter - 1) {
+          output += `\n\n[rewind] You have made this exact call ${repeats.length} times in a row${failed ? " and it failed each time" : ""}. Repeating it again will end the run. Do something different: read a file you have not read, make an edit, or finish with a summary.`;
         }
         await record(output);
         messages.push({ role: "tool", tool_call_id: tc.id, content: output });
