@@ -8,6 +8,7 @@ import { SYSTEM_PROMPT, settings } from "./config";
 import * as git from "./gitwrap";
 import { logger } from "./logger";
 import { requestCancel } from "./loop";
+import { sandboxPythonStatus } from "./sandbox-python";
 import { lastCommitAtOrBefore, messagesFromSteps } from "./messages";
 import * as scheduler from "./scheduler";
 import * as storage from "./storage";
@@ -226,5 +227,5 @@ export async function drainBundleCleanupQueue(): Promise<number> {
 
 export async function stats() {
   const [row] = await db.select({ n: sql<number>`count(*)::int` }).from(branches);
-  return { tokens_used_today: await tokensUsedToday(), daily_token_cap: settings.dailyTokenCap, branches: row?.n ?? 0, max_concurrent_branches: settings.maxConcurrentBranches };
+  return { tokens_used_today: await tokensUsedToday(), daily_token_cap: settings.dailyTokenCap, branches: row?.n ?? 0, max_concurrent_branches: settings.maxConcurrentBranches, sandbox_python: sandboxPythonStatus() };
 }

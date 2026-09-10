@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { settings } from "./config";
-import { sandboxPath } from "./sandbox-python";
+import { ensureSandboxPython, sandboxPath, sandboxPythonStatus } from "./sandbox-python";
 
 const execFileAsync = promisify(execFile);
 
@@ -147,6 +147,7 @@ export async function runTool(worktree: string, command: string): Promise<string
   }
   const argv = shellSplit(whitelist[command]!);
   if (!argv.length) throw new ToolError(`command '${command}' is empty`);
+  if (/^python/.test(argv[0]!) && !sandboxPythonStatus().ready) await ensureSandboxPython();
   const full = [...(await networkIsolationPrefix()), ...ulimitPrefix(), ...argv];
   const limit = Math.floor(settings.toolOutputLimit / 2);
   return new Promise((resolve) => {
