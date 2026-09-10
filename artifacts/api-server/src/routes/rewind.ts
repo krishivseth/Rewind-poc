@@ -168,7 +168,7 @@ async function runBranch(branchId: string, signal: AbortSignal) {
     await db
       .update(branches)
       .set({ status: "failed", finishedAt: new Date(), leaseExpiresAt: null })
-      .where(eq(branches.id, branchId));
+      .where(and(eq(branches.id, branchId), eq(branches.status, "queued")));
     return;
   }
 
@@ -319,14 +319,18 @@ async function runBranch(branchId: string, signal: AbortSignal) {
     const [failed] = await db
       .update(branches)
       .set({
-        status: "failed",
+        status: cancelled ? "cancelled" : "failed",
         stepCount: nextIndex,
         leaseExpiresAt: null,
         finishedAt: new Date(),
       })
       .where(and(eq(branches.id, branchId), eq(branches.status, "running")))
       .returning();
-    if (failed) publishBranchEvent(branchId, { type: "status", status: "failed", error: message });
+    if (failed) publishBranchEvent(branchId, {
+      type: "status",
+      status: cancelled ? "cancelled" : "failed",
+      error: cancelled ? undefined : message,
+    });
   }
 }
 

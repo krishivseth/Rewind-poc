@@ -117,27 +117,31 @@ export async function createAgentWorktree(
   let barePath: string;
   let startCommit = "HEAD";
   if (base) {
-    const localBundle = path.join(bundleRoot, `${branchId}-base.bundle`);
-    barePath = path.join(bundleRoot, `${branchId}-base.git`);
+    const restoreDirectory = await mkdtemp(path.join(bundleRoot, "restore-"));
+    const localBundle = path.join(restoreDirectory, "base.bundle");
+    barePath = path.join(restoreDirectory, "base.git");
     try {
       await downloadBundle(base.bundleKey, localBundle, signal);
       signal?.throwIfAborted();
       await git(tmpdir(), ["clone", "--bare", localBundle, barePath], signal);
       await git(tmpdir(), ["--git-dir", barePath, "cat-file", "-e", `${base.commitHash}^{commit}`], signal);
     } catch (error) {
-      await Promise.all([
-        rm(localBundle, { force: true }),
-        rm(barePath, { recursive: true, force: true }),
-      ]);
+      await rm(restoreDirectory, { recursive: true, force: true });
       throw error;
     }
     startCommit = base.commitHash;
-    cleanupPaths.push(localBundle, barePath);
+    cleanupPaths.push(restoreDirectory);
   } else {
     barePath = await ensureBareRepository(slug);
   }
 
-  const root = await mkdtemp(path.join(worktreeRoot, `${branchId.slice(0, 8)}-`));
+  let root: string;
+  try {
+    root = await mkdtemp(path.join(worktreeRoot, `${branchId.slice(0, 8)}-`));
+  } catch (error) {
+    await Promise.all(cleanupPaths.map((cleanupPath) => rm(cleanupPath, { recursive: true, force: true })));
+    throw error;
+  }
   try {
     await git(tmpdir(), ["--git-dir", barePath, "worktree", "add", "--detach", root, startCommit], signal);
     await git(root, ["config", "user.email", "rewind@local"], signal);
@@ -161,8 +165,12 @@ export async function createAgentWorktree(
       await git(root, ["commit", "-m", label], signal);
     }
     const commitHash = (await git(root, ["rev-parse", "HEAD"], signal)).trim();
-    const localBundle = path.join(bundleRoot, `${branchId}-${commitHash}.bundle`);
+    let bundleDirectory: string | undefined;
     try {
+      // Git can leave a .lock behind after interruption. Never reuse another
+      // attempt's directory, even for the same branch and commit.
+      bundleDirectory = await mkdtemp(path.join(bundleRoot, "checkpoint-"));
+      const localBundle = path.join(bundleDirectory, "snapshot.bundle");
       await git(root, ["bundle", "create", localBundle, "HEAD"], signal);
       signal?.throwIfAborted();
       const bundleKey = await uploadBundle(localBundle, branchId, commitHash, signal);
@@ -175,7 +183,7 @@ export async function createAgentWorktree(
       }
       throw error;
     } finally {
-      await rm(localBundle, { force: true });
+      if (bundleDirectory) await rm(bundleDirectory, { recursive: true, force: true });
     }
   };
 

@@ -1,3 +1,4 @@
 - [OpenAPI parameter naming](orval-param-name-collision.md) — mixed path/query operations can collide in generated Zod and TypeScript exports.
 - [Exact fork reconstruction](exact-fork-reconstruction.md) — fork only from a durable checkpoint; reject incomplete legacy state instead of approximating it.
 - [Snapshot retention locking](snapshot-retention-locking.md) — session retirement and cross-session forks share a lock; object deletion always follows a fresh reference check.
+- [Interrupted Git operations](interrupted-git-operations.md) — workflow restarts can retain temporary Git locks; retries must not assume a clean temporary filesystem.
