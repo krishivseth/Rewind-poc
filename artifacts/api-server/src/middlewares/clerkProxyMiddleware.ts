@@ -28,7 +28,7 @@ export function clerkProxyMiddleware(): RequestHandler {
         proxyReq.setHeader("Clerk-Proxy-Url", `${protocol}://${host}${CLERK_PROXY_PATH}`);
         proxyReq.setHeader("Clerk-Secret-Key", secretKey);
         const forwardedFor = req.headers["x-forwarded-for"];
-        const clientIp = (Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor)?.split(",")[0]?.trim() || req.socket.remoteAddress || "";
+        const clientIp = (Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor)?.split(",")[0]?.trim() || req.socket?.remoteAddress || "";
         if (clientIp) proxyReq.setHeader("X-Forwarded-For", clientIp);
       },
       proxyRes: (proxyRes, req, res) => {
@@ -37,9 +37,13 @@ export function clerkProxyMiddleware(): RequestHandler {
         delete headers["connection"];
         delete headers["keep-alive"];
         const status = proxyRes.statusCode ?? 502;
+        if (status < 200 || status === 204) {
+          delete headers["content-length"];
+        }
         const bodyless = req.method === "HEAD" || status < 200 || status === 204 || status === 304;
         if (headers["content-length"] !== undefined || bodyless) {
           res.writeHead(status, headers);
+          proxyRes.on("error", () => res.destroy());
           proxyRes.pipe(res);
           return;
         }
@@ -51,7 +55,12 @@ export function clerkProxyMiddleware(): RequestHandler {
           res.writeHead(status, headers);
           res.end(body);
         });
-        proxyRes.on("error", () => res.destroy());
+        proxyRes.on("error", () => {
+          if (!res.headersSent) {
+            res.writeHead(502, { "content-length": "0" });
+          }
+          res.end();
+        });
       },
     },
   }) as RequestHandler;
