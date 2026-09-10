@@ -25,7 +25,17 @@ export const sandboxPythonStatus = () => ({ ready: !!venvBin, bin: venvBin, erro
 const exists = (p: string) => access(p).then(() => true, () => false);
 
 async function run(cmd: string, args: string[], timeout: number): Promise<string> {
-  const { stdout, stderr } = await execFileAsync(cmd, args, { timeout, maxBuffer: 8 * 1024 * 1024, env: { ...process.env, PIP_DISABLE_PIP_VERSION_CHECK: "1" } });
+  // Replit's workspace pip config points at an internal proxy that deployments cannot resolve;
+  // ignore any pip.conf and go to the public index.
+  const env = {
+    ...process.env,
+    PIP_DISABLE_PIP_VERSION_CHECK: "1",
+    PIP_CONFIG_FILE: "/dev/null",
+    PIP_INDEX_URL: process.env.SANDBOX_PIP_INDEX_URL ?? "https://pypi.org/simple",
+    PIP_NO_INPUT: "1",
+  };
+  delete (env as Record<string, string | undefined>).PIP_EXTRA_INDEX_URL;
+  const { stdout, stderr } = await execFileAsync(cmd, args, { timeout, maxBuffer: 8 * 1024 * 1024, env });
   return `${stdout}${stderr}`;
 }
 
@@ -42,11 +52,11 @@ async function build(venv: string, py: string): Promise<string> {
       if (!res.ok) throw new Error(`get-pip.py download failed: ${res.status}`);
       const script = path.join(venv, "get-pip.py");
       await writeFile(script, await res.text());
-      await run(python, [script, "--quiet"], 300_000);
+      await run(python, [script, "--quiet", "--isolated"], 300_000);
     }
     if (!(await pipOk())) throw new Error("could not bootstrap pip into the venv");
   }
-  await run(python, ["-m", "pip", "install", "--quiet", "pytest", "flask"], 600_000);
+  await run(python, ["-m", "pip", "install", "--quiet", "--isolated", "pytest", "flask"], 600_000);
   await run(python, ["-c", "import pytest, flask"], 30_000);
   return bin;
 }
