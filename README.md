@@ -19,6 +19,7 @@ The API is served at `/api`; the Rewind web app is served at `/`.
 - Session archive with real Postgres-backed seed data
 - Three-pane debugger workspace with branch tree, timeline scrubber, step details, context inspection, file browsing, and diff entry point
 - Fork form that persists queued child branches
+- Live OpenRouter execution for new sessions and forks using the server-side `OPENROUTER_API_KEY` secret
 - Typed OpenAPI-generated client and Zod contracts
 
 ## Architecture
@@ -35,4 +36,4 @@ Express API (/api)
         +--> future agent loop --> git worktrees --> object storage bundles
 ```
 
-The model loop and durable git bundle layer are the next phase. The current app uses seeded, immutable trajectory rows so the inspection workflow can be exercised before live model access is enabled.
+The current model loop records the user prompt and the model response as durable trajectory steps. Tool execution, git worktrees, durable git bundles, streaming updates, and authentication are the next phase.

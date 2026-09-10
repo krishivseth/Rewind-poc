@@ -11,6 +11,7 @@ import {
   GetStepContextParams,
 } from "@workspace/api-zod";
 import { branches, db, repos, sessions, steps } from "@workspace/db";
+import { generateAgentResponse } from "../lib/openrouter";
 
 const router: IRouter = Router();
 
@@ -60,6 +61,87 @@ function stepView(step: typeof steps.$inferSelect) {
   };
 }
 
+async function runBranch(branchId: string) {
+  const [branch] = await db.select().from(branches).where(eq(branches.id, branchId));
+  if (!branch) return;
+
+  const [session] = await db.select().from(sessions).where(eq(sessions.id, branch.sessionId));
+  const [repo] = session
+    ? await db.select().from(repos).where(eq(repos.id, session.repoId))
+    : [];
+  if (!repo) {
+    await db
+      .update(branches)
+      .set({ status: "failed", finishedAt: new Date() })
+      .where(eq(branches.id, branchId));
+    return;
+  }
+
+  await db.update(branches).set({ status: "running" }).where(eq(branches.id, branchId));
+  const [lastStep] = await db
+    .select({ stepIndex: steps.stepIndex })
+    .from(steps)
+    .where(eq(steps.branchId, branchId))
+    .orderBy(desc(steps.stepIndex))
+    .limit(1);
+  const userStepIndex = (lastStep?.stepIndex ?? -1) + 1;
+
+  await db.insert(steps).values({
+    branchId,
+    stepIndex: userStepIndex,
+    kind: "user",
+    content: { role: "user", content: branch.taskPrompt },
+    filesChanged: [],
+  });
+
+  try {
+    const result = await generateAgentResponse({
+      modelId: branch.modelId,
+      systemPrompt: branch.systemPrompt,
+      taskPrompt: branch.taskPrompt,
+      repository: repo,
+    });
+    const assistantStepIndex = userStepIndex + 1;
+    await db.insert(steps).values({
+      branchId,
+      stepIndex: assistantStepIndex,
+      kind: "assistant",
+      content: { role: "assistant", content: result.content },
+      filesChanged: [],
+      inputTokens: result.inputTokens,
+      outputTokens: result.outputTokens,
+      latencyMs: result.latencyMs,
+    });
+    await db
+      .update(branches)
+      .set({
+        status: "done",
+        stepCount: assistantStepIndex + 1,
+        totalInputTokens: result.inputTokens,
+        totalOutputTokens: result.outputTokens,
+        finishedAt: new Date(),
+      })
+      .where(eq(branches.id, branchId));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "The agent run failed.";
+    await db.insert(steps).values({
+      branchId,
+      stepIndex: userStepIndex + 1,
+      kind: "assistant",
+      content: { role: "assistant", error: message },
+      filesChanged: [],
+    });
+    await db
+      .update(branches)
+      .set({
+        status: "failed",
+        stepCount: userStepIndex + 2,
+        finishedAt: new Date(),
+      })
+      .where(eq(branches.id, branchId));
+  }
+}
+
 router.get("/repos", async (_req, res) => {
   const rows = await db.select().from(repos).orderBy(asc(repos.name));
   res.json(rows.map(({ id, slug, name, description }) => ({ id, slug, name, description })));
@@ -88,6 +170,10 @@ router.get("/sessions", async (_req, res) => {
 
 router.post("/sessions", async (req, res) => {
   const body = CreateSessionBody.parse(req.body);
+  if (!MODELS.some((model) => model.id === body.modelId)) {
+    res.status(400).json({ error: "Unsupported model." });
+    return;
+  }
   const [session] = await db
     .insert(sessions)
     .values({ repoId: body.repoId, title: body.title })
@@ -108,6 +194,7 @@ router.post("/sessions", async (req, res) => {
     branches: [branchView(branch)],
     createdAt: session.createdAt.toISOString(),
   });
+  void runBranch(branch.id);
 });
 
 router.get("/sessions/:id", async (req, res) => {
@@ -193,6 +280,10 @@ router.post("/branches/:id/fork", async (req, res) => {
     res.status(404).json({ error: "Branch not found" });
     return;
   }
+  if (!MODELS.some((model) => model.id === body.modelId)) {
+    res.status(400).json({ error: "Unsupported model." });
+    return;
+  }
   const created = await db
     .insert(branches)
     .values(
@@ -208,6 +299,7 @@ router.post("/branches/:id/fork", async (req, res) => {
     )
     .returning();
   res.status(201).json(created.map(branchView));
+  created.forEach((branch) => void runBranch(branch.id));
 });
 
 router.get("/diff", async (req, res) => {
