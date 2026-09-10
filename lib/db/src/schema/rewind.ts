@@ -89,6 +89,15 @@ export const bundleCleanupQueue = pgTable("bundle_cleanup_queue", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// No branch FK: an interrupted upload must remain discoverable after retirement.
+export const bundleUploadIntents = pgTable("bundle_upload_intents", {
+  bundleKey: text("bundle_key").primaryKey(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  index("bundle_upload_intents_expiry_idx").on(table.expiresAt),
+]);
+
 export type Repo = typeof repos.$inferSelect;
 export type Session = typeof sessions.$inferSelect;
 export type Branch = typeof branches.$inferSelect;

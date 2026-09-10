@@ -9,9 +9,19 @@ import test from "node:test";
 const execFileAsync = promisify(execFile);
 const bundleDir = await mkdtemp(path.join(tmpdir(), "rewind-test-bundles-"));
 process.env.REWIND_LOCAL_BUNDLE_DIR = bundleDir;
-const { checkpointAtStep, createAgentWorktree } = await import("./.generated/test-support.mjs");
+const { checkpointAtStep, createAgentWorktree, pool } = await import("./.generated/test-support.mjs");
+const uploadedBundleKeys = new Set();
 
-test.after(async () => rm(bundleDir, { recursive: true, force: true }));
+test.after(async () => {
+  if (uploadedBundleKeys.size) {
+    await pool.query(
+      "delete from bundle_upload_intents where bundle_key = any($1::text[])",
+      [[...uploadedBundleKeys]],
+    );
+  }
+  await pool.end();
+  await rm(bundleDir, { recursive: true, force: true });
+});
 
 async function tree(root) {
   const { stdout } = await execFileAsync("git", ["ls-files", "-z"], { cwd: root });
@@ -25,6 +35,7 @@ async function tree(root) {
 async function trajectory(slug, id) {
   const source = await createAgentWorktree(slug, `${id}-source`);
   const initial = await source.checkpoint("initial");
+  uploadedBundleKeys.add(initial.bundleKey);
   const initialTree = await tree(source.root);
   await source.execute("write_file", { path: "nested/new.txt", content: "checkpoint two\n" });
   await source.execute("edit_file", {
@@ -33,6 +44,7 @@ async function trajectory(slug, id) {
     new_string: "Exact-step",
   });
   const changed = await source.checkpoint("file-changing");
+  uploadedBundleKeys.add(changed.bundleKey);
   const changedTree = await tree(source.root);
   return { source, initial, initialTree, changed, changedTree };
 }

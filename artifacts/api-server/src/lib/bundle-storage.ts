@@ -3,6 +3,8 @@ import { createReadStream, createWriteStream } from "node:fs";
 import { copyFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
+import { randomUUID } from "node:crypto";
+import { BUNDLE_UPLOAD_TIMEOUT_MS, registerBundleUpload } from "./bundle-upload-intents";
 
 const REPLIT_SIDECAR_ENDPOINT = "http://127.0.0.1:1106";
 
@@ -40,15 +42,27 @@ function locationFromObjectKey(objectKey: string) {
 }
 
 export async function uploadBundle(localPath: string, branchId: string, commitHash: string, signal?: AbortSignal) {
-  const relativePath = `rewind/bundles/${branchId}/${commitHash}.bundle`;
+  signal?.throwIfAborted();
+  // Immutable per-attempt keys prevent a cancelled repeat checkpoint from
+  // overwriting or deleting an earlier checkpoint of the very same commit.
+  const relativePath = `rewind/bundles/${branchId}/${commitHash}/${randomUUID()}.bundle`;
+  const objectKey = `/objects/${relativePath}`;
+  const uploadSignal = AbortSignal.any([
+    ...(signal ? [signal] : []),
+    AbortSignal.timeout(BUNDLE_UPLOAD_TIMEOUT_MS),
+  ]);
+  // Never touch storage before this durable write. On *any* failure leave the
+  // intent intact; even abort can race successful object creation.
+  await registerBundleUpload(objectKey);
+  uploadSignal.throwIfAborted();
   const localRoot = process.env["REWIND_LOCAL_BUNDLE_DIR"];
   if (localRoot) {
-    signal?.throwIfAborted();
     const destination = path.join(localRoot, relativePath);
     await mkdir(path.dirname(destination), { recursive: true });
-    await copyFile(localPath, destination);
-    signal?.throwIfAborted();
-    return `/objects/${relativePath}`;
+    uploadSignal.throwIfAborted();
+    await pipeline(createReadStream(localPath), createWriteStream(destination, { flags: "wx" }), { signal: uploadSignal });
+    uploadSignal.throwIfAborted();
+    return objectKey;
   }
   const { bucketName, objectName } = privateLocation(relativePath);
   const destination = storage.bucket(bucketName).file(objectName);
@@ -59,8 +73,9 @@ export async function uploadBundle(localPath: string, branchId: string, commitHa
       cacheControl: "private, no-store",
       metadata: { branchId, commitHash },
     },
-  }), { signal });
-  return `/objects/${relativePath}`;
+  }), { signal: uploadSignal });
+  uploadSignal.throwIfAborted();
+  return objectKey;
 }
 
 export async function downloadBundle(objectKey: string, destination: string, signal?: AbortSignal) {

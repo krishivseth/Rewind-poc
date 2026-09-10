@@ -15,6 +15,7 @@ import { runCodingAgent } from "../lib/openrouter";
 import { getBundleCleanupStatus, runBundleCleanup, sessionExpiry } from "../lib/run-bundles";
 import { logger } from "../lib/logger";
 import { checkpointAtStep, checkpointFromStep } from "../lib/exact-fork";
+import { adoptBundleUpload } from "../lib/bundle-upload-intents";
 
 const router: IRouter = Router();
 const subscribers = new Map<string, Set<Response>>();
@@ -179,7 +180,10 @@ async function runBranch(branchId: string, signal: AbortSignal) {
     .orderBy(desc(steps.stepIndex))
     .limit(1);
   let nextIndex = (lastStep?.stepIndex ?? -1) + 1;
-  const appendStep = async (values: Omit<typeof steps.$inferInsert, "branchId" | "stepIndex">) => {
+  const appendStep = async (
+    values: Omit<typeof steps.$inferInsert, "branchId" | "stepIndex">,
+    bundleKey?: string,
+  ) => {
     const step = await db.transaction(async (tx) => {
       const [current] = await tx
         .select({ status: branches.status })
@@ -191,6 +195,7 @@ async function runBranch(branchId: string, signal: AbortSignal) {
         .insert(steps)
         .values({ ...values, branchId, stepIndex: nextIndex })
         .returning();
+      if (bundleKey) await adoptBundleUpload(tx, bundleKey);
       return inserted;
     });
     nextIndex += 1;
@@ -225,6 +230,8 @@ async function runBranch(branchId: string, signal: AbortSignal) {
             })
             .where(eq(steps.id, userStep.id))
             .returning();
+          if (!saved) throw new Error("The initial checkpoint step no longer exists.");
+          await adoptBundleUpload(tx, checkpoint.bundleKey);
           return saved;
         });
         publishBranchEvent(branchId, { type: "step", step: stepView(updated) });
@@ -266,7 +273,7 @@ async function runBranch(branchId: string, signal: AbortSignal) {
           toolResult: toolResult.output,
           filesChanged: toolResult.filesChanged,
           commitHash: checkpoint?.commitHash,
-        });
+        }, checkpoint?.bundleKey);
       },
     });
     signal.throwIfAborted();
@@ -277,7 +284,7 @@ async function runBranch(branchId: string, signal: AbortSignal) {
       toolResult: result.changed.length ? `Committed ${result.changed.join(", ")}` : "No file changes to commit.",
       filesChanged: result.changed,
       commitHash: result.commitHash,
-    });
+    }, result.bundleKey);
     signal.throwIfAborted();
     const [completed] = await db
       .update(branches)

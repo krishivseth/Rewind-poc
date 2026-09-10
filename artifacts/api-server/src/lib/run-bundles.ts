@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, isNotNull, isNull, lte, notInArray, or, sql } from "drizzle-orm";
-import { branches, bundleCleanupQueue, db, sessions, steps } from "@workspace/db";
+import { branches, bundleCleanupQueue, bundleUploadIntents, db, sessions, steps } from "@workspace/db";
 import { deleteBundle } from "./bundle-storage";
+import { reconcileBundleUploads } from "./bundle-upload-intents";
 import { logger } from "./logger";
 
 export const SESSION_RETENTION_DAYS = 30;
@@ -115,9 +116,13 @@ export async function drainBundleCleanupQueue(now: Date) {
     .where(or(isNull(bundleCleanupQueue.lastAttemptAt), lte(bundleCleanupQueue.lastAttemptAt, retryBefore)))
     .orderBy(sql`${bundleCleanupQueue.lastAttemptAt} asc nulls first`, asc(bundleCleanupQueue.createdAt))
     .limit(CLEANUP_BATCH_SIZE);
-  const referenced = await referencedBundleKeys(queued.map((row) => row.bundleKey));
-
   for (const item of queued) {
+    // Registration survives until publication or safe reconciliation. A queued
+    // key must not be deleted while upload/persistence still owns its intent.
+    const [upload] = await db.select({ bundleKey: bundleUploadIntents.bundleKey })
+      .from(bundleUploadIntents).where(eq(bundleUploadIntents.bundleKey, item.bundleKey)).limit(1);
+    if (upload) continue;
+    const referenced = await referencedBundleKeys([item.bundleKey]);
     if (referenced.has(item.bundleKey)) {
       await db.delete(bundleCleanupQueue).where(eq(bundleCleanupQueue.bundleKey, item.bundleKey));
       continue;
@@ -176,6 +181,7 @@ export function runBundleCleanup(now = new Date()) {
   if (cleanupPromise) return cleanupPromise;
   cleanupPromise = (async () => {
     await reconcileAbandonedRuns(now);
+    await reconcileBundleUploads();
     const results = await Promise.allSettled([
       retireEligibleSessions(now),
       drainBundleCleanupQueue(now),

@@ -1,6 +1,7 @@
 import { db, branches, repos, sessions, steps } from "@workspace/db";
 import { and, eq, isNull } from "drizzle-orm";
 import { createAgentWorktree } from "./worktree";
+import { adoptBundleUpload } from "./bundle-upload-intents";
 
 async function ensureDemoSnapshots() {
   const [demo] = await db
@@ -36,31 +37,56 @@ async function ensureDemoSnapshots() {
     });
     const edited = await worktree.checkpoint("Seed demo edited state");
     await db.transaction(async (tx) => {
-      await tx
+      // Match retirement's session lock and recheck after concurrent startups.
+      // A losing repair leaves its uploads registered for reconciliation rather
+      // than replacing (and orphaning) the winning repair's durable snapshots.
+      const [session] = await tx.select({ id: sessions.id }).from(sessions)
+        .where(eq(sessions.id, demo.branch.sessionId)).for("update");
+      if (!session) throw new Error("Demo checkpoint session no longer exists.");
+      const [currentInitial] = await tx.select({ content: steps.content }).from(steps)
+        .where(and(eq(steps.branchId, demo.branch.id), eq(steps.stepIndex, 0)));
+      if (
+        typeof currentInitial?.content === "object" && currentInitial.content !== null &&
+        "bundleKey" in currentInitial.content && typeof currentInitial.content.bundleKey === "string"
+      ) return;
+      const [savedInitialStep] = await tx
         .update(steps)
         .set({
           commitHash: initial.commitHash,
           content: { role: "user", content: "Make all tests pass", bundleKey: initial.bundleKey },
         })
-        .where(and(eq(steps.branchId, demo.branch.id), eq(steps.stepIndex, 0)));
-      await tx
+        .where(and(eq(steps.branchId, demo.branch.id), eq(steps.stepIndex, 0)))
+        .returning({ id: steps.id });
+      if (!savedInitialStep) throw new Error("Demo initial checkpoint step no longer exists.");
+      await adoptBundleUpload(tx, initial.bundleKey);
+
+      const [savedEditedStep] = await tx
         .update(steps)
         .set({
           commitHash: edited.commitHash,
           content: { path: "csv_stats.py", content: "def row_count(rows):\n    return len(rows)\n", bundleKey: edited.bundleKey },
         })
-        .where(and(eq(steps.branchId, demo.branch.id), eq(steps.stepIndex, 6)));
-      await tx
+        .where(and(eq(steps.branchId, demo.branch.id), eq(steps.stepIndex, 6)))
+        .returning({ id: steps.id });
+      if (!savedEditedStep) throw new Error("Demo edited checkpoint step no longer exists.");
+      await adoptBundleUpload(tx, edited.bundleKey);
+
+      const [savedFinalStep] = await tx
         .update(steps)
         .set({
           commitHash: edited.commitHash,
           content: { name: "run", arguments: { command: "test" }, bundleKey: edited.bundleKey },
         })
-        .where(and(eq(steps.branchId, demo.branch.id), eq(steps.stepIndex, 7)));
-      await tx
+        .where(and(eq(steps.branchId, demo.branch.id), eq(steps.stepIndex, 7)))
+        .returning({ id: steps.id });
+      if (!savedFinalStep) throw new Error("Demo final checkpoint step no longer exists.");
+
+      const [savedBranch] = await tx
         .update(branches)
         .set({ bundleKey: edited.bundleKey })
-        .where(eq(branches.id, demo.branch.id));
+        .where(eq(branches.id, demo.branch.id))
+        .returning({ id: branches.id });
+      if (!savedBranch) throw new Error("Demo checkpoint branch no longer exists.");
     });
   } finally {
     await worktree.cleanup();
