@@ -92,3 +92,9 @@ Choices the spec left open, and what this codebase does about them.
 30. **Model text is rendered** with a 40-line inline renderer: paragraphs, lists, code, bold, fences.
 31. **Frontend tests** cover the pure logic only (divergence, step clamping, cache merging, fork
     labels); components are exercised by hand in the browser.
+32. **Visual theme is the Replit design's**: near-black navy, teal primary, amber accent, Space
+    Grotesk for prose, IBM Plex Mono for data, square corners, small uppercase tracked labels, dotted
+    ground. Kind colours: task sky, model violet, call amber, result teal. Only the skin changed; the
+    components and behaviour are the port's.
+33. **A remembered pane width is ignored** when it would leave the centre pane under 800px of room;
+    the default split applies instead. Narrow windows never lose the scrubber.

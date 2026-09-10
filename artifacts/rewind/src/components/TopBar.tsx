@@ -10,8 +10,8 @@ export default function TopBar({ children }: { children?: ReactNode }) {
   const pct = s ? Math.min(100, Math.round((s.tokens_used_today / s.daily_token_cap) * 100)) : 0
   return (
     <header className="flex h-10 shrink-0 items-center gap-4 border-b border-line bg-panel px-3">
-      <Link to="/" className="mono text-[13px] font-medium tracking-tight text-ink hover:text-accent">
-        rewind<span className="text-accent">_</span>
+      <Link to="/" className="flex items-center gap-2 mono text-[11px] uppercase tracking-[.2em] text-ink hover:text-accent">
+        <span className="inline-block h-2 w-2 bg-accent" />rewind
       </Link>
       {children}
       {s && (

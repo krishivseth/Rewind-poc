@@ -1,25 +1,26 @@
 @import "tailwindcss";
 
+/* Rewind: chromatic debugger dark theme (carried over from the Replit design) */
 @theme {
-  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-sans: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", "DM Mono", ui-monospace, Menlo, monospace;
 
-  --color-bg: #14171d;
-  --color-panel: #1a1e26;
-  --color-raised: #20252f;
-  --color-line: #2a3039;
-  --color-ink: #d8dce4;
-  --color-muted: #7f8898;
-  --color-faint: #4d5563;
-  --color-accent: #6ea8fe;
-  --color-accent-dim: #2a4166;
+  --color-bg: hsl(220 20% 6%);
+  --color-panel: hsl(220 18% 9%);
+  --color-raised: hsl(220 16% 13%);
+  --color-line: hsl(220 14% 18%);
+  --color-ink: hsl(210 22% 88%);
+  --color-muted: hsl(215 12% 52%);
+  --color-faint: hsl(216 12% 36%);
+  --color-accent: hsl(174 72% 48%);
+  --color-accent-dim: hsl(174 60% 14%);
 
-  --color-k-user: #9aa3b2;
-  --color-k-assistant: #6ea8fe;
-  --color-k-call: #d9a441;
-  --color-k-result: #4cc2a0;
-  --color-bad: #e5646a;
-  --color-good: #4cc2a0;
+  --color-k-user: hsl(199 89% 72%);
+  --color-k-assistant: hsl(258 90% 76%);
+  --color-k-call: hsl(38 88% 62%);
+  --color-k-result: hsl(174 72% 56%);
+  --color-bad: hsl(2 72% 58%);
+  --color-good: hsl(174 72% 48%);
 }
 
 html, body, #root { height: 100%; }
@@ -31,33 +32,43 @@ body {
   font-size: 13px;
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
+  background-image: radial-gradient(hsl(220 14% 12% / .6) 1px, transparent 1px);
+  background-size: 22px 22px;
 }
 * { scrollbar-width: thin; scrollbar-color: var(--color-line) transparent; }
 *:focus-visible { outline: 1.5px solid var(--color-accent); outline-offset: 1px; }
 button { cursor: pointer; }
-button:disabled { cursor: not-allowed; opacity: .5; }
+button:disabled { cursor: not-allowed; opacity: .45; }
 
 @keyframes pulse-dot { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
 .pulse { animation: pulse-dot 1.2s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .pulse { animation: none; } }
 
+/* square corners everywhere; the Replit design used none */
+.rounded, .rounded-sm, .rounded-\[1px\] { border-radius: 0 !important; }
+
 .pane-title {
-  font-size: 11px; color: var(--color-muted); padding: 6px 10px;
-  border-bottom: 1px solid var(--color-line); display: flex; align-items: center; gap: 8px; min-height: 30px;
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--color-muted); padding: 6px 12px;
+  border-bottom: 1px solid var(--color-line); display: flex; align-items: center; gap: 10px; min-height: 32px;
+  background: var(--color-panel);
 }
+.pane-title .text-ink { color: var(--color-ink); }
 .mono { font-family: var(--font-mono); }
 .btn {
-  font-size: 12px; padding: 3px 9px; border: 1px solid var(--color-line); border-radius: 3px;
-  background: var(--color-raised); color: var(--color-ink);
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+  padding: 5px 10px; border: 1px solid var(--color-line); background: transparent; color: var(--color-muted);
+  transition: color .12s, border-color .12s, background .12s;
 }
-.btn:hover:not(:disabled) { border-color: var(--color-muted); }
-.btn-accent { background: var(--color-accent-dim); border-color: var(--color-accent); color: #e8f0ff; }
+.btn:hover:not(:disabled) { color: var(--color-ink); border-color: var(--color-muted); }
+.btn-accent { border-color: hsl(174 72% 48% / .5); color: var(--color-accent); }
+.btn-accent:hover:not(:disabled) { background: hsl(174 72% 48% / .1); border-color: var(--color-accent); color: var(--color-accent); }
 .field {
-  width: 100%; background: var(--color-bg); border: 1px solid var(--color-line); border-radius: 3px;
-  color: var(--color-ink); padding: 5px 7px; font-size: 12px; font-family: inherit;
+  width: 100%; background: var(--color-bg); border: 1px solid var(--color-line);
+  color: var(--color-ink); padding: 7px 9px; font-size: 12px; font-family: var(--font-mono);
 }
 .field:focus { border-color: var(--color-accent); outline: none; }
 kbd {
-  font-family: var(--font-mono); font-size: 10px; padding: 0 4px; border: 1px solid var(--color-line);
-  border-bottom-width: 2px; border-radius: 3px; color: var(--color-muted);
+  font-family: var(--font-mono); font-size: 9px; padding: 0 4px; border: 1px solid var(--color-line);
+  color: var(--color-muted); text-transform: uppercase;
 }

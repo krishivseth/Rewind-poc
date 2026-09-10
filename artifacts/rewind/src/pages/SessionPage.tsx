@@ -28,6 +28,14 @@ export default function SessionPage() {
   const [params, setParams] = useSearchParams()
   const deepLinked = useRef(false)
   const [rightWidth, setRightWidth] = useState<number>(() => { try { return Number(localStorage.getItem('rewind.rightPane')) || 0 } catch { return 0 } })
+  const [viewport, setViewport] = useState(() => window.innerWidth)
+  useEffect(() => {
+    const onResize = () => setViewport(window.innerWidth)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+  // a remembered width must leave the centre pane at least 560px; below that fall back to the default split
+  const effectiveRight = rightWidth && viewport - rightWidth >= 800 ? rightWidth : 0
 
   const sessionQ = useQuery({
     queryKey: ['session', id],
@@ -192,8 +200,8 @@ export default function SessionPage() {
           onPointerDown={startResize} title="Drag to resize" role="separator" aria-orientation="vertical"
         />
         <aside
-          className={`shrink-0 flex flex-col bg-panel min-h-[40vh] md:min-h-0 ${(sel.diffMode && other) || compareParent ? 'hidden' : ''} ${rightWidth ? '' : 'md:w-[44%] xl:w-[46%]'}`}
-          style={rightWidth ? { width: rightWidth } : undefined}
+          className={`shrink-0 flex flex-col bg-panel min-h-[40vh] md:min-h-0 ${(sel.diffMode && other) || compareParent ? 'hidden' : ''} ${effectiveRight ? '' : 'md:w-[44%] xl:w-[46%]'}`}
+          style={effectiveRight ? { width: effectiveRight } : undefined}
         >
           <div className="flex min-h-0 flex-1 flex-col md:flex-row">
             <div className="md:w-[190px] shrink-0 border-b md:border-b-0 md:border-r border-line flex flex-col max-h-[30vh] md:max-h-none">
