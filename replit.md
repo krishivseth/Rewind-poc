@@ -1,6 +1,6 @@
-# [Project name]
+# Rewind
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+Rewind lets developers scrub through coding-agent trajectories, inspect exact context and file snapshots, and fork alternate branches from any recorded step.
 
 ## Run & Operate
 
@@ -22,24 +22,33 @@ _Replace the heading above with the project's name, and this line with one sente
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/rewind/src/App.tsx` — session archive and debugger workspace
+- `artifacts/rewind/src/index.css` — Rewind dark workbench theme
+- `artifacts/api-server/src/routes/rewind.ts` — session, branch, step, file, context, fork, and diff routes
+- `artifacts/api-server/src/lib/rewind-seed.ts` — first-boot seeded repositories and trajectory
+- `lib/db/src/schema/rewind.ts` — Postgres tables and enums
+- `lib/api-spec/openapi.yaml` — source-of-truth API contract
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- The first vertical slice uses the workspace's existing TypeScript Express/React stack so the seeded debugger is runnable before the live agent loop is enabled.
+- Session and trajectory records are durable in Postgres; the current seeded file snapshots are carried in step content.
+- OpenRouter model ids are centralized in the API route and mirrored in the UI selectors.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+Users can browse seeded coding-agent sessions, scrub individual steps, inspect context and file state, replay a trajectory, and create queued fork branches with a different model or edited prompt.
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+The product should remain dark, dense, monospace-forward, and focused on debugging rather than marketing.
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- Run API codegen after changing `lib/api-spec/openapi.yaml`.
+- Restart the managed API and web workflows after backend or frontend changes.
 
 ## Pointers
 
 - See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- See `DECISIONS.md` for the deliberate first-slice tradeoffs and follow-up phases.

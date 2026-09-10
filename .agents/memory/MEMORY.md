@@ -1,0 +1,1 @@
+- [OpenAPI parameter naming](orval-param-name-collision.md) — mixed path/query operations can collide in generated Zod and TypeScript exports.
