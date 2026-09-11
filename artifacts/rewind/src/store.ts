@@ -22,6 +22,7 @@ interface SelectionState {
   setContextOpen: (open: boolean) => void
   setForkOpen: (open: boolean) => void
   setCompareParent: (id: string | null) => void
+  resetForSession: () => void
 }
 export const useSelection = create<SelectionState>((set, get) => ({
   branchId: null,
@@ -34,6 +35,7 @@ export const useSelection = create<SelectionState>((set, get) => ({
   compareParent: null,
   selectBranch: (id) => set({ branchId: id, stepIndex: null, forkOpen: false, compareParent: null }),
   setCompareParent: (compareParent) => set({ compareParent, diffMode: false, diffOther: null }),
+  resetForSession: () => set({ branchId: null, stepIndex: null, diffMode: false, diffOther: null, diffOtherStep: null, contextOpen: false, forkOpen: false, compareParent: null }),
   setStep: (stepIndex) => set({ stepIndex }),
   toggleDiffWith: (id) => {
     const { branchId, diffOther } = get()

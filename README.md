@@ -177,6 +177,7 @@ Keyboard: `←` `→` step, `Home` `End` jump, `F` fork, `D` diff mode, `C` cont
 | `PORT` | `8080` | API server port |
 | `REWIND_READ_ONLY` | `0` | `1` refuses every write; leave a deployment public without spending credits |
 | `SANDBOX_PYTHON` | | Python to build the sandbox venv from, if `python3` is not the one you want |
+| `TRUST_PROXY_HOPS` | `1` | Proxy hops to trust for the client IP used by the rate limit |
 
 Limits:
 
@@ -227,6 +228,7 @@ Reads are public. Writes need the `X-Rewind-Key` header.
 | GET | `/api/stats` | Tokens today, caps, `writes` state, sandbox python status, storage backend |
 | GET | `/api/auth/check` | 200 if the key is valid, 401 with a reason otherwise |
 | GET | `/api/health` | Liveness |
+| GET | `/api/ready` | Readiness: pings Postgres, 503 when it does not answer (also `/api/healthz`) |
 
 SSE event shape: `{ type: "step" | "status", data: <step row | branch> }`.
 

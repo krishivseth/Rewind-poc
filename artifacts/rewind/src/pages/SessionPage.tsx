@@ -23,10 +23,10 @@ import { useSelection } from '../store'
 export default function SessionPage() {
   const { id } = useParams<{ id: string }>()
   const sel = useSelection()
+  const deepLinked = useRef(false)
   const [file, setFile] = useState<string | null>(null)
   const [fileDiff, setFileDiff] = useState(false)
   const [params, setParams] = useSearchParams()
-  const deepLinked = useRef(false)
   const [rightWidth, setRightWidth] = useState<number>(() => { try { return Number(localStorage.getItem('rewind.rightPane')) || 0 } catch { return 0 } })
   const [viewport, setViewport] = useState(() => window.innerWidth)
   useEffect(() => {
@@ -36,6 +36,10 @@ export default function SessionPage() {
   }, [])
   // a remembered width must leave the centre pane at least 560px; below that fall back to the default split
   const effectiveRight = rightWidth && viewport - rightWidth >= 800 ? rightWidth : 0
+
+  // selection state lives in a store that outlives the route; a new session starts clean
+  const lastSession = useRef<string | undefined>(undefined)
+  if (lastSession.current !== id) { lastSession.current = id; sel.resetForSession(); deepLinked.current = false }
 
   const sessionQ = useQuery({
     queryKey: ['session', id],
@@ -54,7 +58,8 @@ export default function SessionPage() {
       deepLinked.current = true
       if (branches.some((b) => b.id === wantBranch)) {
         sel.selectBranch(wantBranch)
-        if (wantStep !== null) sel.setStep(Number(wantStep))
+        const n = wantStep === null ? NaN : Number(wantStep)
+        if (Number.isInteger(n) && n >= 0) sel.setStep(n)
       }
       setParams({}, { replace: true })
       return

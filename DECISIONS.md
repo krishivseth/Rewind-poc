@@ -122,3 +122,13 @@ Choices the spec left open, and what this codebase does about them.
     Node's built-in loader, so local runs need no dotenv package and deployments need no `.env`.
 42. **Root build skips the mockup sandbox.** It is Replit agent scaffolding with its own type
     errors and no part of the product; `pnpm build` typechecks and builds only the API and the UI.
+43. **Hardening after review.** 500s return a generic message with the detail in the log; the boot
+    migration runs under a Postgres advisory lock inside one transaction; `/api/ready` (and
+    `/api/healthz`, the Replit health path) pings the database while `/api/health` stays a cheap
+    liveness probe; the rate limit uses `req.ip` behind one trusted proxy hop instead of the first
+    `X-Forwarded-For` entry. Declined from the same review: locking the parent on fork (steps are
+    append-only, so nothing at or below the boundary can change) and durable cancellation (a restart
+    fails every non-terminal branch, so there is nothing to cancel afterwards).
+44. **Selection state resets per session.** The zustand store outlives the route, so diff and compare
+    selections used to leak into the next session opened. Deep links validate the step as a
+    non-negative integer. The delete control on home cards is a sibling of the link, not a child.

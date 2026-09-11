@@ -10,6 +10,7 @@ import { publish, subscribe } from "../lib/pubsub";
 import * as scheduler from "../lib/scheduler";
 import * as services from "../lib/services";
 import { requireKey, takeBranchQuota, validKey } from "../middlewares/access-key";
+import { logger } from "../lib/logger";
 import { sandboxPythonStatus } from "../lib/sandbox-python";
 
 const router: IRouter = Router();
@@ -22,7 +23,7 @@ const wrap = (fn: (req: Request, res: Response) => Promise<void>) => (req: Reque
     if (e instanceof HttpError) res.status(e.status).json({ detail: e.message });
     else if (e instanceof z.ZodError) res.status(422).json({ detail: e.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") });
     else if (e instanceof RangeError) res.status(404).json({ detail: e.message });
-    else { console.error(e); res.status(500).json({ detail: (e as Error).message }); }
+    else { logger.error({ err: e, path: req.path }, "request failed"); res.status(500).json({ detail: "Internal error. The server log has the details." }); }
   });
 };
 

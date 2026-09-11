@@ -80,7 +80,7 @@ export default function Home() {
             {q.data?.map((s) => {
               const live = s.branches.filter((b) => isLive(b.status)).length
               return (
-                <li key={s.id}>
+                <li key={s.id} className="relative">
                   <Link to={`/sessions/${s.id}`} className="grid grid-cols-[1fr_auto] items-center gap-6 border border-line rounded bg-panel px-4 py-3 hover:border-muted">
                     <div className="min-w-0 space-y-1">
                       <div className="text-[14px] text-ink truncate" title={s.title}>{s.title}</div>
@@ -90,11 +90,14 @@ export default function Home() {
                         <span className="text-faint">{s.branch_count} branch{s.branch_count === 1 ? '' : 'es'}</span>
                         {live > 0 && <span className="text-accent">{live} running</span>}
                         <span className="text-faint">{new Date(s.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
-                        <DeleteSession sessionId={s.id} branchCount={s.branch_count} compact onDone={() => void q.refetch()} />
                       </div>
                     </div>
                     <TreeSketch branches={s.branches} width={240} />
                   </Link>
+                  {/* sibling of the link, not a child: buttons inside anchors are invalid and click-through prone */}
+                  <div className="absolute right-4 bottom-3 flex items-center">
+                    <DeleteSession sessionId={s.id} branchCount={s.branch_count} compact onDone={() => void q.refetch()} />
+                  </div>
                 </li>
               )
             })}

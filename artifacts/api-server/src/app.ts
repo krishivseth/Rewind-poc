@@ -8,6 +8,9 @@ import { logger } from "./lib/logger";
 import { settings } from "./lib/config";
 
 const app: Express = express();
+// One trusted proxy hop (Replit's router, or the TLS proxy in front of Docker): req.ip is the
+// client as seen by that hop, not whatever a client put in X-Forwarded-For.
+app.set("trust proxy", Number(process.env.TRUST_PROXY_HOPS ?? 1));
 
 app.use(pinoHttp({
   logger,

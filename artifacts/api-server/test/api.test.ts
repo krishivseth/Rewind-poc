@@ -244,4 +244,13 @@ test("writes are gated while warming up, in read-only mode, and over the session
   assert.ok((await get(`/api/branches/${root}`)).data.est_cost_usd >= 0);
 });
 
+test("readiness pings the database and 500s are generic", async () => {
+  const r = await get("/api/ready");
+  assert.equal(r.status, 200); assert.equal(r.data.db, "ok");
+  // a step index that is not a number reaches the handler and must not leak internals
+  const bad = await get(`/api/branches/00000000-0000-4000-8000-000000000000/steps/abc/files`);
+  assert.ok([404, 500].includes(bad.status));
+  if (bad.status === 500) assert.equal(bad.data.detail, "Internal error. The server log has the details.");
+});
+
 test("fake client sanity", () => { assert.ok(new FakeModelClient([])); });

@@ -38,10 +38,15 @@ const statements = [
   `do $$ begin if not exists (select 1 from steps group by branch_id, "index" having count(*) > 1) then create unique index if not exists steps_branch_index_uq on steps (branch_id, "index"); end if; end $$`,
 ];
 
+const LOCK_KEY = 7_364_919; // arbitrary, stable: two instances booting together take turns
+
 export async function migrate(): Promise<void> {
-  for (const s of statements) {
-    try { await db.execute(sql.raw(s)); }
-    catch (e) { logger.error({ err: e, statement: s.slice(0, 80) }, "migration statement failed"); throw e; }
-  }
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(${LOCK_KEY})`);
+    for (const s of statements) {
+      try { await tx.execute(sql.raw(s)); }
+      catch (e) { logger.error({ err: e, statement: s.slice(0, 80) }, "migration statement failed"); throw e; }
+    }
+  });
   logger.info("schema up to date");
 }

@@ -33,7 +33,8 @@ class SlidingWindow {
 }
 export const branchLimiter = new SlidingWindow();
 
-export const clientIp = (req: Request) => (req.header("x-forwarded-for")?.split(",")[0]?.trim()) || req.ip || "unknown";
+/** req.ip already honours `trust proxy`, so a client cannot invent its own address. */
+export const clientIp = (req: Request) => req.ip || "unknown";
 
 /** Reserve n branch creations against both the key and the IP, or return false. */
 export function takeBranchQuota(req: Request, key: string, n: number): boolean {
