@@ -6,9 +6,12 @@ messages the model saw, fork from that step with a different model or an edited 
 branches run side by side, diff any two of them, and line up every fork of a branch to find where
 they diverged.
 
-It runs three ways from the same code: locally with `pnpm`, in Docker on any VPS, or on Replit as
-the submission target. One long-running Node process serves the API, the live event streams, the
-agent workers and the built frontend.
+**Live:** https://rewind-production-a902.up.railway.app
+
+It runs three ways from the same code: locally with `pnpm`, in Docker on any host, or on Replit.
+The link above is the Docker image on Railway with a Postgres service and a persistent volume.
+One long-running Node process serves the API, the live event streams, the agent workers and the
+built frontend.
 
 - [Two-minute tour](#two-minute-tour)
 - [Quick start (local)](#quick-start-local)
