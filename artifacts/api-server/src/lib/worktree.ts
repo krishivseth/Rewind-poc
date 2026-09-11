@@ -43,8 +43,11 @@ export async function prepareBranchWorktree(branchId: string, baseBundleKey: str
   const dest = branchDir(branchId);
   await rm(dest, { recursive: true, force: true });
   await mkdir(path.dirname(dest), { recursive: true });
-  if (parentBundleKey && (await storage.exists(parentBundleKey))) await restoreBundle(parentBundleKey, dest);
-  else if (parentBranchId && existsSync(branchDir(parentBranchId))) await git.cloneLocal(branchDir(parentBranchId), dest, path.dirname(dest));
+  if (parentBundleKey) {
+    // a finished parent must have its bundle; falling back to the base repo would silently lose history
+    if (!(await storage.exists(parentBundleKey))) throw new Error(`parent bundle ${parentBundleKey} is missing from storage (DATA_DIR or object storage changed?)`);
+    await restoreBundle(parentBundleKey, dest);
+  } else if (parentBranchId && existsSync(branchDir(parentBranchId))) await git.cloneLocal(branchDir(parentBranchId), dest, path.dirname(dest));
   else await restoreBundle(baseBundleKey, dest);
   if (startCommit) {
     if (!(await git.commitExists(dest, startCommit))) throw new Error(`start commit ${startCommit} not found in restored history`);

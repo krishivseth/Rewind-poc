@@ -253,4 +253,33 @@ test("readiness pings the database and 500s are generic", async () => {
   if (bad.status === 500) assert.equal(bad.data.detail, "Internal error. The server log has the details.");
 });
 
+test("public cheap-model writes", async () => {
+  settings.publicWrites = "cheap";
+  const noKey = (body: Record<string, unknown>) => j("POST", "/api/sessions", body, {});
+  const other = "anthropic/claude-sonnet-5";
+  let r = await noKey({ repo_id: repoId, title: "t", task_prompt: "x", model_id: other });
+  assert.equal(r.status, 401); assert.match(r.data.detail, /Visitors can run/);
+  r = await noKey({ repo_id: repoId, title: "t", task_prompt: "x", model_id: cheapestModel().id });
+  assert.equal(r.status, 201, JSON.stringify(r.data));
+  const root = r.data.root_branch_id as string;
+  await waitDone(root);
+  const f = await j("POST", `/api/branches/${root}/fork`, { step_index: 3, model_id: cheapestModel().id }, {});
+  assert.equal(f.status, 201);
+  assert.equal((await j("POST", `/api/branches/${root}/fork`, { step_index: 3, model_id: other }, {})).status, 401);
+  // public budget is separate from the global cap
+  settings.publicDailyTokenCap = 1;
+  await scheduler.waitAll();
+  r = await noKey({ repo_id: repoId, title: "t", task_prompt: "x", model_id: cheapestModel().id });
+  assert.equal(r.status, 429); assert.match(r.data.detail, /public budget/);
+  const keyed = await newSession(); // the key is not subject to the public budget
+  assert.equal(keyed.status, 201);
+  await waitDone(keyed.data.root_branch_id);
+  settings.publicDailyTokenCap = 500_000;
+  settings.publicWrites = "off";
+  r = await noKey({ repo_id: repoId, title: "t", task_prompt: "x", model_id: cheapestModel().id });
+  assert.equal(r.status, 401);
+  settings.publicWrites = "cheap";
+  assert.equal((await get("/api/stats")).data.public_writes, "cheap");
+});
+
 test("fake client sanity", () => { assert.ok(new FakeModelClient([])); });

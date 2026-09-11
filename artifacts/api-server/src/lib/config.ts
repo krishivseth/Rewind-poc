@@ -20,8 +20,9 @@ function findRepoRoot(): string {
   return process.cwd();
 }
 const repoRoot = findRepoRoot();
+// relative paths are relative to the repository root, whatever the working directory is
 function resolveFromRoot(p: string): string {
-  return path.isAbsolute(p) ? p : path.resolve(process.cwd(), p);
+  return path.isAbsolute(p) ? p : path.resolve(repoRoot, p);
 }
 
 /** All runtime settings. Read once at import; tests mutate `settings` directly. */
@@ -57,6 +58,10 @@ export const settings = {
   leaseSeconds: num("RUN_LEASE_SECONDS", 900),
   maxTotalTokensPerSession: num("MAX_TOTAL_TOKENS_PER_SESSION", 300_000),
   readOnly: (process.env.REWIND_READ_ONLY ?? "0") === "1",
+  // "cheap": visitors without the key may create sessions and forks on the cheap model, within the
+  // per-IP rate limit and PUBLIC_DAILY_TOKEN_CAP. "off": every write needs the key (the spec's default).
+  publicWrites: (process.env.REWIND_PUBLIC_WRITES ?? "cheap") as "cheap" | "off",
+  publicDailyTokenCap: num("PUBLIC_DAILY_TOKEN_CAP", 500_000),
 };
 
 export interface Model {

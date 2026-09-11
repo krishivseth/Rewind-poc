@@ -10,6 +10,7 @@ It runs three ways from the same code: locally with `pnpm`, in Docker on any VPS
 the submission target. One long-running Node process serves the API, the live event streams, the
 agent workers and the built frontend.
 
+- [Two-minute tour](#two-minute-tour)
 - [Quick start (local)](#quick-start-local)
 - [Docker](#docker)
 - [Replit](#replit)
@@ -23,6 +24,19 @@ agent workers and the built frontend.
 - [Troubleshooting](#troubleshooting)
 - [Known limitations](#known-limitations)
 - [Repository layout](#repository-layout)
+
+## Two-minute tour
+
+1. Open the deployment. The home page explains the idea and links "Start here" to the session
+   with the most forks.
+2. Drag the scrubber or press `→` a few times. The file pane shows the repository at that exact
+   commit; changed files are marked.
+3. Press `C`. That is the full message array the model saw at this step, with its token count.
+4. Press `F`, pick 2 copies, fork. Two new branches appear in the tree and stream live. Visitors can
+   do this without a key on the cheap model.
+5. When they finish, click "compare 2 forks" under the parent. The view lines the forks up and
+   marks the first step where they diverged, with a "Fork here" button at that step.
+6. Shift-click one fork while another is selected for a side-by-side diff of their final code.
 
 ## Quick start (local)
 
@@ -89,8 +103,11 @@ The Replit pip proxy is not reachable from deployments, so the sandbox venv inst
 step, as long as its step count, coloured by status. Search matches tool output, tool arguments,
 model text and notes across every session and deep-links to the step.
 
-**New session** picks a seed repository, a model and a task. Viewing is public; creating, forking,
-cancelling, deleting and notes ask for the access key once per browser tab.
+**New session** picks a seed repository, a model and a task. Viewing is public. With
+`REWIND_PUBLIC_WRITES=cheap` (the default) visitors can create sessions and forks on the cheap model
+without a key, within the per-IP rate limit and a separate public daily budget; other models,
+cancelling, deleting and notes ask for the access key once per browser tab. Set
+`REWIND_PUBLIC_WRITES=off` for key-only writes.
 
 **Session page**, three panes:
 
@@ -176,6 +193,8 @@ Keyboard: `←` `→` step, `Home` `End` jump, `F` fork, `D` diff mode, `C` cont
 | `PRIVATE_OBJECT_DIR` | | Set by Replit App Storage; bundles go to the bucket instead of disk |
 | `PORT` | `8080` | API server port |
 | `REWIND_READ_ONLY` | `0` | `1` refuses every write; leave a deployment public without spending credits |
+| `REWIND_PUBLIC_WRITES` | `cheap` | `cheap`: visitors may run the cheap model without a key; `off`: every write needs the key |
+| `PUBLIC_DAILY_TOKEN_CAP` | 500000 | Tokens per UTC day that keyless writes may spend before they are refused |
 | `SANDBOX_PYTHON` | | Python to build the sandbox venv from, if `python3` is not the one you want |
 | `TRUST_PROXY_HOPS` | `1` | Proxy hops to trust for the client IP used by the rate limit |
 

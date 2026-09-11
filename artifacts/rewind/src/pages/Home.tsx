@@ -20,6 +20,10 @@ export default function Home() {
   const [submitted, setSubmitted] = useState('')
   const search = useQuery({ queryKey: ['search', submitted], queryFn: () => api.search(submitted), enabled: submitted.length >= 2 })
   const key = useAuth((s) => s.key)
+  const stats = useQuery({ queryKey: ['stats'], queryFn: api.stats })
+  const publicMode = !key && stats.data?.public_writes === 'cheap'
+  // the session with the most branches is the best first thing to open
+  const featured = q.data && q.data.length ? [...q.data].sort((a, b) => b.branch_count - a.branch_count)[0] : undefined
   return (
     <div className="flex h-full flex-col">
       <TopBar>
@@ -30,11 +34,22 @@ export default function Home() {
         </form>
         <span className="ml-auto flex items-center gap-2">
           {key && <span className="text-[11px] text-faint">key entered</span>}
-          <button className="btn btn-accent" onClick={() => setCreating((c) => !c)}>{key ? 'New session' : 'Enter access key'}</button>
+          <button className="btn btn-accent" onClick={() => setCreating((c) => !c)}>{key || publicMode ? 'New session' : 'Enter access key'}</button>
         </span>
       </TopBar>
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="mx-auto max-w-[820px] p-4 space-y-3">
+          <section className="border border-line bg-panel px-5 py-4 space-y-2">
+            <p className="text-[15px] text-ink">Rewind records a coding agent step by step, so you can scrub back to any moment, see exactly what the model saw, and fork from there.</p>
+            <p className="text-[13px] text-muted">
+              Open a session, drag the scrubber, press <kbd>C</kbd> for the model's context, then <kbd>F</kbd> to fork it with another model or prompt and watch both runs side by side.
+              Under a branch with forks, "compare" lines them up and marks where they diverged.
+            </p>
+            <p className="text-[13px] text-muted flex flex-wrap items-center gap-x-3 gap-y-1">
+              {featured && <Link to={`/sessions/${featured.id}`} className="btn btn-accent">Start here: {featured.title}</Link>}
+              {publicMode && <span>Visitors can start sessions and forks on {stats.data?.cheap_model?.split('/').pop()} without a key.</span>}
+            </p>
+          </section>
           {creating && <NewSessionForm onClose={() => setCreating(false)} />}
           {submitted.length >= 2 && (
             <div className="border border-line rounded bg-panel">

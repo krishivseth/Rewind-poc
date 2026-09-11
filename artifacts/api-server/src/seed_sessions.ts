@@ -39,7 +39,7 @@ async function main() {
   const others = MODELS.filter((m) => m.id !== cheap).slice(0, 2).map((m) => m.id);
   const created: string[] = [];
 
-  const s1 = await api<{ id: string; root_branch_id: string }>("POST", "/api/sessions", { repo_id: repo("csv-stats"), title: "csv-stats: make all tests pass", task_prompt: "Make all tests pass", model_id: cheap });
+  const s1 = await api<{ id: string; root_branch_id: string }>("POST", "/api/sessions", { repo_id: repo("csv-stats"), title: "Five identical forks of one bug fix", task_prompt: "Make all tests pass", model_id: cheap });
   log(`csv-stats session ${s1.id} root ${s1.root_branch_id.slice(0, 8)}`);
   const root1 = await waitDone(s1.root_branch_id);
   log(`  root ${root1.status} after ${root1.step_count} steps`);
@@ -47,7 +47,7 @@ async function main() {
   log(`  forked 5x from step ${f1.fork_step_index}${f1.snapped ? " (snapped)" : ""}`);
   created.push(s1.root_branch_id, ...f1.branches.map((b) => b.id));
 
-  const s2 = await api<{ id: string; root_branch_id: string }>("POST", "/api/sessions", { repo_id: repo("rate-limiter"), title: "rate-limiter: find and fix the bug", task_prompt: "Find and fix the bug so tests pass", model_id: cheap });
+  const s2 = await api<{ id: string; root_branch_id: string }>("POST", "/api/sessions", { repo_id: repo("rate-limiter"), title: "Same task, three models", task_prompt: "Find and fix the bug so tests pass", model_id: cheap });
   log(`rate-limiter session ${s2.id} root ${s2.root_branch_id.slice(0, 8)}`);
   const root2 = await waitDone(s2.root_branch_id);
   log(`  root ${root2.status} after ${root2.step_count} steps`);
@@ -58,7 +58,7 @@ async function main() {
     created.push(...f.branches.map((b) => b.id));
   }
 
-  const s3 = await api<{ id: string; root_branch_id: string }>("POST", "/api/sessions", { repo_id: repo("tiny-todo"), title: "tiny-todo: add DELETE /todos/{id}", task_prompt: "Add a DELETE /todos/{id} route with a test", model_id: cheap });
+  const s3 = await api<{ id: string; root_branch_id: string }>("POST", "/api/sessions", { repo_id: repo("tiny-todo"), title: "Add a feature to a small Flask app", task_prompt: "Add a DELETE /todos/{id} route with a test", model_id: cheap });
   log(`tiny-todo session ${s3.id} root ${s3.root_branch_id.slice(0, 8)}`);
   created.push(s3.root_branch_id);
 

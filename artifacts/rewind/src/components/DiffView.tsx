@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { api, type Branch, type Step } from '../api'
 import { shortHash, shortModel } from '../lib/steps'
 import { EDITOR_OPTIONS, languageFor } from '../monaco'
+import '../monaco'
 
 interface Props {
   a: Branch; aSteps: Step[]; aIndex: number

@@ -17,9 +17,12 @@ export default function NewSessionForm({ onClose }: { onClose: () => void }) {
   const nav = useNavigate()
   const qc = useQueryClient()
   const selectBranch = useSelection((s) => s.selectBranch)
+  const [showKey, setShowKey] = useState(false)
+  const publicMode = !key && stats.data?.public_writes === 'cheap'
 
   const repo = repos.data?.find((r) => r.id === (repoId || repos.data?.[0]?.id))
-  const model = modelId || models.data?.find((m) => m.cheap)?.id || models.data?.[0]?.id || ''
+  const cheapId = models.data?.find((m) => m.cheap)?.id
+  const model = publicMode && cheapId ? cheapId : modelId || cheapId || models.data?.[0]?.id || ''
 
   const create = useMutation({
     mutationFn: () => api.createSession({
@@ -37,8 +40,19 @@ export default function NewSessionForm({ onClose }: { onClose: () => void }) {
     <div className="border border-line rounded bg-panel">
       <div className="pane-title"><span className="text-ink">New session</span><button className="btn ml-auto" onClick={onClose}>Close</button></div>
       <div className="p-3">
-        {!key ? <AccessKeyPrompt compact /> : (
+        {!key && (!publicMode || showKey) ? (
+          <div className="space-y-2">
+            <AccessKeyPrompt compact />
+            {publicMode && <button type="button" className="text-[11px] text-muted hover:text-ink" onClick={() => setShowKey(false)}>Continue without a key</button>}
+          </div>
+        ) : (
           <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); if (repo && task.trim()) create.mutate() }}>
+            {publicMode && (
+              <p className="text-[12px] text-muted">
+                Visitors can run {models.data?.find((m) => m.id === cheapId)?.name ?? 'the cheap model'} without a key, within a daily budget.{' '}
+                <button type="button" className="text-accent hover:underline" onClick={() => setShowKey(true)}>Have the access key?</button>
+              </p>
+            )}
             <div className="grid gap-3 md:grid-cols-2">
               <label className="block space-y-1">
                 <span className="text-[11px] text-muted">Repository</span>
@@ -49,7 +63,7 @@ export default function NewSessionForm({ onClose }: { onClose: () => void }) {
               </label>
               <label className="block space-y-1">
                 <span className="text-[11px] text-muted">Model</span>
-                <select className="field mono" value={model} onChange={(e) => setModelId(e.target.value)}>
+                <select className="field mono" value={model} disabled={publicMode} onChange={(e) => setModelId(e.target.value)}>
                   {models.data?.map((m) => <option key={m.id} value={m.id}>{m.name}{m.cheap ? ' (cheap)' : ''}</option>)}
                 </select>
               </label>

@@ -9,7 +9,7 @@ import { branchView, isCancelRequested, requestCancel, stepView } from "../lib/l
 import { publish, subscribe } from "../lib/pubsub";
 import * as scheduler from "../lib/scheduler";
 import * as services from "../lib/services";
-import { requireKey, takeBranchQuota, validKey } from "../middlewares/access-key";
+import { requireKey, requireKeyOrPublic, takeBranchQuota, validKey } from "../middlewares/access-key";
 import { logger } from "../lib/logger";
 import { sandboxPythonStatus } from "../lib/sandbox-python";
 
@@ -131,19 +131,20 @@ const CreateSession = z.object({ repo_id: z.string(), title: z.string().min(1).m
 const ForkBody = z.object({ step_index: z.number().int().min(0), model_id: modelId, edited_task_prompt: z.string().max(20_000).nullish(), count: z.number().int().min(1).max(5).default(1) });
 const NoteBody = z.object({ note: z.string().max(2000).nullish() });
 
-async function checkDailyCap() {
+async function checkDailyCap(isPublic: boolean) {
   if (settings.readOnly) throw new HttpError(503, "This deployment is read-only; sessions and forks cannot be created.");
-  if (!sandboxPythonStatus().ready) throw new HttpError(503, "The sandbox is still warming up after a restart. Try again in a minute.");
+  if (!sandboxPythonStatus().ready) throw new HttpError(503, "The sandbox is still warming up after a restart. Ready in about a minute.");
   const used = await services.tokensUsedToday();
   if (used >= settings.dailyTokenCap) throw new HttpError(429, `daily token cap reached (${used} of ${settings.dailyTokenCap}); try again tomorrow`);
+  if (isPublic && used >= settings.publicDailyTokenCap) throw new HttpError(429, "Today's public budget is used up. Enter the access key to keep going, or come back tomorrow.");
 }
 const quota = (req: Request, res: Response, n: number) => {
   if (!takeBranchQuota(req, res.locals.keyId as string, n)) throw new HttpError(429, `rate limit: at most ${settings.rateLimitBranchesPerHour} branches per hour per key and per IP`);
 };
 
-router.post("/sessions", requireKey, wrap(async (req, res) => {
+router.post("/sessions", requireKeyOrPublic, wrap(async (req, res) => {
   const body = CreateSession.parse(req.body);
-  await checkDailyCap();
+  await checkDailyCap(res.locals.public === true);
   quota(req, res, 1);
   let created;
   try { created = await services.createSession(parseId(body.repo_id), body.title, body.task_prompt, body.model_id, res.locals.keyId as string); }
@@ -151,10 +152,10 @@ router.post("/sessions", requireKey, wrap(async (req, res) => {
   res.status(201).json({ id: created.session.id, root_branch_id: created.branch.id, branch: bview(created.branch) });
 }));
 
-router.post("/branches/:id/fork", requireKey, wrap(async (req, res) => {
+router.post("/branches/:id/fork", requireKeyOrPublic, wrap(async (req, res) => {
   const parent = await loadBranch(req.params.id as string);
   const body = ForkBody.parse(req.body);
-  await checkDailyCap();
+  await checkDailyCap(res.locals.public === true);
   const spent = await services.sessionTokens(parent.sessionId);
   if (spent >= settings.maxTotalTokensPerSession) throw new HttpError(429, `this session has used ${spent} tokens, over its budget of ${settings.maxTotalTokensPerSession}; start a new session`);
   quota(req, res, body.count);

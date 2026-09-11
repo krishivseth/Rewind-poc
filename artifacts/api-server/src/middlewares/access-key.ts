@@ -1,7 +1,7 @@
 /** Access key check and in-memory write rate limiting. Viewing is public; writes need X-Rewind-Key. */
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
-import { settings } from "../lib/config";
+import { cheapestModel, settings } from "../lib/config";
 
 export const keyId = (key: string) => createHash("sha256").update(key).digest("hex").slice(0, 16);
 
@@ -9,6 +9,24 @@ export function validKey(key: string | undefined): boolean {
   if (!key || !settings.accessKey) return false;
   const a = Buffer.from(key), b = Buffer.from(settings.accessKey);
   return a.length === b.length && timingSafeEqual(a, b);
+}
+
+/**
+ * Like requireKey, but lets a visitor through on the cheap model when public writes are on.
+ * Sets res.locals.public = true and a per-IP key id so the rate limit still applies.
+ */
+export function requireKeyOrPublic(req: Request, res: Response, next: NextFunction): void {
+  const key = req.header("x-rewind-key");
+  if (validKey(key)) { res.locals.keyId = keyId(key!); res.locals.public = false; next(); return; }
+  if (settings.publicWrites !== "cheap") { requireKey(req, res, next); return; }
+  const model = (req.body as { model_id?: unknown } | undefined)?.model_id;
+  if (model !== cheapestModel().id) {
+    res.status(401).json({ detail: `Visitors can run ${cheapestModel().name} without a key. Enter the access key to use other models.` });
+    return;
+  }
+  res.locals.keyId = `public:${clientIp(req)}`;
+  res.locals.public = true;
+  next();
 }
 
 export function requireKey(req: Request, res: Response, next: NextFunction): void {

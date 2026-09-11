@@ -1,19 +1,21 @@
 import { useQuery } from '@tanstack/react-query'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+
+// Monaco is heavy; the components that use it load when first needed
+const FileViewer = lazy(() => import('../components/FileViewer'))
+const DiffView = lazy(() => import('../components/DiffView'))
+const CompareView = lazy(() => import('../components/CompareView'))
 import { useParams, useSearchParams } from 'react-router-dom'
 import { api, isLive } from '../api'
 import BranchTree from '../components/BranchTree'
-import CompareView from '../components/CompareView'
 import DeleteSession from '../components/DeleteSession'
 import { resolveStep } from '../lib/compare'
-import DiffView from '../components/DiffView'
 import ForkPopover from '../components/ForkPopover'
 import { useSessionEvents } from '../hooks/useBranchEvents'
 import { useAuth } from '../store'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import ContextDrawer from '../components/ContextDrawer'
 import FileTree from '../components/FileTree'
-import FileViewer from '../components/FileViewer'
 import Scrubber from '../components/Scrubber'
 import StepCard from '../components/StepCard'
 import TopBar from '../components/TopBar'
@@ -24,6 +26,8 @@ export default function SessionPage() {
   const { id } = useParams<{ id: string }>()
   const sel = useSelection()
   const deepLinked = useRef(false)
+  const [hintDismissed, setHintDismissed] = useState<boolean>(() => { try { return localStorage.getItem('rewind.hint') === '1' } catch { return false } })
+  const dismissHint = () => { setHintDismissed(true); try { localStorage.setItem('rewind.hint', '1') } catch { /* private mode */ } }
   const [file, setFile] = useState<string | null>(null)
   const [fileDiff, setFileDiff] = useState(false)
   const [params, setParams] = useSearchParams()
@@ -174,16 +178,22 @@ export default function SessionPage() {
               }
             />
           )}
+          {!hintDismissed && branch && steps.length > 0 && (
+            <div className="flex items-center gap-3 border-b border-line bg-accent-dim/40 px-4 py-1.5 text-[12px] text-ink">
+              <span>Drag the scrubber or use <kbd>←</kbd> <kbd>→</kbd>. <kbd>C</kbd> shows what the model saw. <kbd>F</kbd> forks from this step. Shift-click a second branch to diff.</span>
+              <button className="btn ml-auto" onClick={dismissHint}>Got it</button>
+            </div>
+          )}
           {sel.forkOpen && branch && step && (
             <ForkPopover branch={branch} stepIndex={step.index} onClose={() => sel.setForkOpen(false)} />
           )}
           {compareParent && compareForks.length > 1 ? (
-            <CompareView parent={compareParent} forks={compareForks} all={branches}
+            <Suspense fallback={<Loading />}><CompareView parent={compareParent} forks={compareForks} all={branches}
               onPick={(bid, i) => { sel.selectBranch(bid); sel.setStep(i) }}
               onFork={(bid, i) => { sel.selectBranch(bid); sel.setStep(i); sel.setForkOpen(true) }}
-              onExit={() => sel.setCompareParent(null)} />
+              onExit={() => sel.setCompareParent(null)} /></Suspense>
           ) : sel.diffMode && branch && other ? (
-            <DiffView a={branch} aSteps={steps} aIndex={Math.max(0, index)} b={other} bIndex={sel.diffOtherStep} onBIndex={sel.setDiffOtherStep} onExit={() => sel.setDiffMode(false)} />
+            <Suspense fallback={<Loading />}><DiffView a={branch} aSteps={steps} aIndex={Math.max(0, index)} b={other} bIndex={sel.diffOtherStep} onBIndex={sel.setDiffOtherStep} onExit={() => sel.setDiffMode(false)} /></Suspense>
           ) : sel.diffMode && branch ? (
             <div className="flex flex-1 items-center justify-center text-[12px] text-muted">Diff mode. Shift-click another branch in the tree to compare against it.</div>
           ) : step ? (
@@ -221,7 +231,7 @@ export default function SessionPage() {
             </div>
             <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-bg">
               {branch && index >= 0 && (
-                <FileViewer branchId={branch.id} index={index} path={file} diff={fileDiff} onToggleDiff={() => setFileDiff((d) => !d)} changedHere={changedHere} />
+                <Suspense fallback={<Loading />}><FileViewer branchId={branch.id} index={index} path={file} diff={fileDiff} onToggleDiff={() => setFileDiff((d) => !d)} changedHere={changedHere} /></Suspense>
               )}
             </div>
           </div>
@@ -245,4 +255,8 @@ function Shell({ title, subtitle, branch, extra, children }: { title: string; su
       {children}
     </div>
   )
+}
+
+function Loading() {
+  return <div className="flex flex-1 items-center justify-center text-[12px] text-muted">Loading…</div>
 }

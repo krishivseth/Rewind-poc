@@ -2,6 +2,7 @@ import Editor, { DiffEditor } from '@monaco-editor/react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api'
 import { EDITOR_OPTIONS, languageFor } from '../monaco'
+import '../monaco'
 import { shortHash } from '../lib/steps'
 
 interface Props { branchId: string; index: number; path: string | null; diff: boolean; onToggleDiff: () => void; changedHere: boolean }

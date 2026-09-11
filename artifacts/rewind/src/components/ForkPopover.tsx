@@ -15,7 +15,12 @@ export default function ForkPopover({ branch, stepIndex, onClose }: Props) {
   const [prompt, setPrompt] = useState(branch.task_prompt)
   const [count, setCount] = useState(1)
   const [result, setResult] = useState<ForkResponse | null>(null)
+  const [showKey, setShowKey] = useState(false)
   const selectBranch = useSelection((s) => s.selectBranch)
+  const publicMode = !key && stats.data?.public_writes === 'cheap'
+  const cheap = stats.data?.cheap_model
+  // visitors are pinned to the cheap model
+  const effectiveModel = publicMode && cheap ? cheap : model
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
@@ -25,7 +30,7 @@ export default function ForkPopover({ branch, stepIndex, onClose }: Props) {
 
   const fork = useMutation({
     mutationFn: () => api.fork(branch.id, {
-      step_index: stepIndex, model_id: model, count,
+      step_index: stepIndex, model_id: effectiveModel, count,
       edited_task_prompt: prompt !== branch.task_prompt ? prompt : undefined,
     }),
     onSuccess: async (res) => {
@@ -41,8 +46,11 @@ export default function ForkPopover({ branch, stepIndex, onClose }: Props) {
         <button className="btn ml-auto" onClick={onClose}>Close <kbd>Esc</kbd></button>
       </div>
       <div className="p-3 space-y-3">
-        {!key ? (
-          <AccessKeyPrompt compact />
+        {!key && (!publicMode || showKey) ? (
+          <div className="space-y-2">
+            <AccessKeyPrompt compact />
+            {publicMode && <button type="button" className="text-[11px] text-muted hover:text-ink" onClick={() => setShowKey(false)}>Continue without a key</button>}
+          </div>
         ) : result ? (
           <div className="space-y-2 text-[12px]">
             <p className="text-ink">
@@ -60,9 +68,15 @@ export default function ForkPopover({ branch, stepIndex, onClose }: Props) {
           </div>
         ) : (
           <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); fork.mutate() }}>
+            {publicMode && (
+              <p className="text-[12px] text-muted">
+                Visitors can fork on {models.data?.find((m) => m.id === cheap)?.name ?? 'the cheap model'} without a key.{' '}
+                <button type="button" className="text-accent hover:underline" onClick={() => setShowKey(true)}>Have the access key?</button>
+              </p>
+            )}
             <label className="block space-y-1">
               <span className="text-[11px] text-muted">Model</span>
-              <select className="field mono" value={model} onChange={(e) => setModel(e.target.value)}>
+              <select className="field mono" value={effectiveModel} disabled={publicMode} onChange={(e) => setModel(e.target.value)}>
                 {(models.data ?? [{ id: branch.model_id, name: branch.model_id, cheap: false }]).map((m) => (
                   <option key={m.id} value={m.id}>{m.name}{m.cheap ? ' (cheap)' : ''}</option>
                 ))}

@@ -132,3 +132,21 @@ Choices the spec left open, and what this codebase does about them.
 44. **Selection state resets per session.** The zustand store outlives the route, so diff and compare
     selections used to leak into the next session opened. Deep links validate the step as a
     non-negative integer. The delete control on home cards is a sibling of the link, not a child.
+
+## Public demo
+
+45. **Visitors can fork on the cheap model without a key** (`REWIND_PUBLIC_WRITES=cheap`, the
+    default). The spec gates every write behind the key; for a public demo that hides the product's
+    point, so keyless writes are allowed for the cheap model only, counted against the per-IP rate
+    limit and a separate `PUBLIC_DAILY_TOKEN_CAP` (500k tokens, about five cents of DeepSeek). The
+    key still unlocks other models, cancel, delete and notes. `off` restores the spec's behaviour.
+46. **Home page explains itself** in three sentences and links "Start here" to the session with the
+    most branches. A dismissable one-line hint sits under the scrubber on first visit.
+47. **Monaco loads on demand.** The file viewer, diff view and compare view are lazy chunks, so the
+    first paint of a session is the 100 KB app bundle, not the 1 MB editor.
+48. **Relative `DATA_DIR` resolves against the repository root**, not the working directory:
+    `pnpm dev` runs the API from `artifacts/api-server` and `pnpm start` from the root, and a data
+    directory that moves between them made a finished parent's bundle vanish. A missing parent
+    bundle now fails the fork with a clear message instead of silently cloning the base repo.
+49. **Seed session titles are for humans**: "Five identical forks of one bug fix", "Same task, three
+    models", "Add a feature to a small Flask app".
