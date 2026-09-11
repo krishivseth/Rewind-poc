@@ -52,3 +52,4 @@ Thumbs.db
 data/
 .env
 artifacts/api-server/test/.generated/
+attached_assets/
