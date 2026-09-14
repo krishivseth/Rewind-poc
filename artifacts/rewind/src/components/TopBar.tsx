@@ -9,19 +9,19 @@ export default function TopBar({ children }: { children?: ReactNode }) {
   const s = stats.data
   const pct = s ? Math.min(100, Math.round((s.tokens_used_today / s.daily_token_cap) * 100)) : 0
   return (
-    <header className="flex h-10 shrink-0 items-center gap-4 border-b border-line bg-panel px-3">
+    <header className="flex h-10 shrink-0 items-center gap-3 sm:gap-4 border-b border-line bg-panel px-3 min-w-0">
       <Link to="/" className="flex items-center gap-2 mono text-[11px] uppercase tracking-[.2em] text-ink hover:text-accent">
         <span className="inline-block h-2 w-2 bg-accent" />rewind
       </Link>
       {children}
       {s?.writes === 'warming_up' && <span className="mono text-[10px] uppercase tracking-wider text-k-call" title={s.sandbox_python?.error ?? ''}>sandbox warming up</span>}
-      {s?.writes === 'read_only' && <span className="mono text-[10px] uppercase tracking-wider text-muted">read-only</span>}
+      {s?.writes === 'read_only' && <span className="mono text-[10px] uppercase tracking-wider text-muted shrink-0">read-only</span>}
       {s && (
-        <span className="mono text-[11px] text-faint flex items-center gap-2 shrink-0" title={`${s.tokens_used_today.toLocaleString()} of ${s.daily_token_cap.toLocaleString()} tokens spent today`}>
+        <span className="mono text-[11px] text-faint hidden sm:flex items-center gap-2 shrink-0" title={`${s.tokens_used_today.toLocaleString()} of ${s.daily_token_cap.toLocaleString()} tokens spent today`}>
           <span className="inline-block h-1.5 w-16 rounded-sm bg-line overflow-hidden">
             <span className="block h-full" style={{ width: `${pct}%`, background: pct > 80 ? 'var(--color-bad)' : 'var(--color-muted)' }} />
           </span>
-          {fmtTokens(s.tokens_used_today)} / {fmtTokens(s.daily_token_cap)} today
+          <span className="hidden lg:inline">{fmtTokens(s.tokens_used_today)} / {fmtTokens(s.daily_token_cap)} today</span>
         </span>
       )}
     </header>

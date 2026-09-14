@@ -158,3 +158,7 @@ Choices the spec left open, and what this codebase does about them.
     hides those controls and says the runs are recorded. Five curated sessions, fourteen branches,
     recorded with DeepSeek V4 Flash roots and GPT-5.4 Mini and Gemini 3.8 Flash comparison forks,
     live in its Postgres and volume. The Replit deployment of the same code stays interactive.
+51. **Phones show one pane at a time.** Below the md breakpoint the session page keeps the scrubber
+    on top and switches the body between Steps, Files and Branches with a bar at the bottom; diff and
+    compare modes jump to Steps. Stacking all three panes gave each a sliver of a 780px screen. The
+    top bar drops the subtitle and token readout on small screens and the home search fills the bar.

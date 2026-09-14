@@ -44,7 +44,7 @@ export default function Scrubber({ steps, index, forkStepIndex, live, onChange, 
         aria-valuemax={Math.max(0, steps.length - 1)}
         aria-valuenow={index}
         tabIndex={0}
-        className="relative flex h-9 items-end gap-px cursor-ew-resize"
+        className="relative flex h-9 items-end gap-px cursor-ew-resize touch-none"
         onPointerDown={(e) => { dragging.current = true; const i = indexFromX(e.clientX); if (i !== null) onChange(i) }}
         onPointerMove={(e) => { const i = indexFromX(e.clientX); const r = ref.current?.getBoundingClientRect(); if (i !== null && r) setHover({ index: i, x: e.clientX - r.left }) }}
         onPointerLeave={() => setHover(null)}
@@ -107,7 +107,7 @@ export default function Scrubber({ steps, index, forkStepIndex, live, onChange, 
             {KIND_LABEL[current.kind]}
           </span>
         )}
-        {current && <span className="truncate text-faint min-w-0">{stepTitle(current)}</span>}
+        {current && <span className="truncate text-faint min-w-0 hidden sm:inline">{stepTitle(current)}</span>}
         <span className="ml-auto flex items-center gap-1.5 shrink-0">{actions}</span>
         <span className="hidden xl:flex gap-2 text-faint shrink-0">
           <span><kbd>←</kbd> <kbd>→</kbd> step</span>

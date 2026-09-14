@@ -28,9 +28,9 @@ export default function Home() {
   return (
     <div className="flex h-full flex-col">
       <TopBar>
-        <span className="text-[13px] text-muted">Sessions</span>
-        <form className="flex items-center gap-1 ml-2" onSubmit={(e) => { e.preventDefault(); setSubmitted(query.trim()) }}>
-          <input className="field w-64 py-1" placeholder="Search tool output, arguments, notes" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <span className="text-[13px] text-muted hidden sm:inline">Sessions</span>
+        <form className="flex items-center gap-1 sm:ml-2 min-w-0 flex-1 sm:flex-none" onSubmit={(e) => { e.preventDefault(); setSubmitted(query.trim()) }}>
+          <input className="field w-full sm:w-64 py-1" placeholder="Search runs" value={query} onChange={(e) => setQuery(e.target.value)} />
           {submitted && <button type="button" className="btn" onClick={() => { setQuery(''); setSubmitted('') }}>Clear</button>}
         </form>
         <span className="ml-auto flex items-center gap-2">
@@ -43,7 +43,7 @@ export default function Home() {
         </span>
       </TopBar>
       <div className="min-h-0 flex-1 overflow-auto">
-        <div className="mx-auto max-w-[820px] p-4 space-y-3">
+        <div className="mx-auto max-w-[820px] p-3 sm:p-4 space-y-3">
           <section className="border border-line bg-panel px-5 py-4 space-y-2">
             <p className="text-[15px] text-ink">Rewind records a coding agent step by step, so you can scrub back to any moment, see exactly what the model saw, and {readOnly ? 'compare the branches that forked from there' : 'fork from there'}.</p>
             <p className="text-[13px] text-muted">
@@ -108,7 +108,7 @@ export default function Home() {
               const live = s.branches.filter((b) => isLive(b.status)).length
               return (
                 <li key={s.id} className="relative">
-                  <Link to={`/sessions/${s.id}`} className="grid grid-cols-[1fr_auto] items-center gap-6 border border-line rounded bg-panel px-4 py-3 hover:border-muted">
+                  <Link to={`/sessions/${s.id}`} className="grid grid-cols-1 sm:grid-cols-[1fr_auto] items-center gap-3 sm:gap-6 border border-line rounded bg-panel px-4 py-3 hover:border-muted">
                     <div className="min-w-0 space-y-1">
                       <div className="text-[14px] text-ink truncate" title={s.title}>{s.title}</div>
                       <div className="mono text-[11px] text-muted flex gap-4">
@@ -119,7 +119,8 @@ export default function Home() {
                         <span className="text-faint">{new Date(s.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
                       </div>
                     </div>
-                    <TreeSketch branches={s.branches} width={240} />
+                    <div className="hidden sm:block"><TreeSketch branches={s.branches} width={240} /></div>
+                    <div className="sm:hidden"><TreeSketch branches={s.branches} width={200} /></div>
                   </Link>
                   {/* sibling of the link, not a child: buttons inside anchors are invalid and click-through prone */}
                   <div className="absolute right-4 bottom-3 flex items-center">
