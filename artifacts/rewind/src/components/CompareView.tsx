@@ -1,4 +1,4 @@
-import { useQueries } from '@tanstack/react-query'
+import { useQueries, useQuery } from '@tanstack/react-query'
 import { useMemo } from 'react'
 import { api, type Branch, type Step } from '../api'
 import { forkLabels } from '../lib/cache'
@@ -20,6 +20,8 @@ const TICK = 14
 /** Every fork of one parent, one row each, ticks aligned by step index, first divergence marked. */
 export default function CompareView({ parent, forks, all, onPick, onFork, onExit }: Props) {
   const queries = useQueries({ queries: forks.map((f) => ({ queryKey: ['steps', f.id], queryFn: () => api.steps(f.id) })) })
+  const stats = useQuery({ queryKey: ['stats'], queryFn: api.stats })
+  const readOnly = stats.data?.read_only === true
   const trajectories = queries.map((q) => q.data ?? [])
   const ready = queries.every((q) => q.isSuccess)
   const forkAt = forks[0]?.fork_step_index ?? 0
@@ -109,7 +111,7 @@ export default function CompareView({ parent, forks, all, onPick, onFork, onExit
                         ) : <span className="text-faint">already finished ({trajectories[r].length} steps)</span>}
                       </td>
                       <td className="py-1.5 text-muted whitespace-nowrap"><StatusBadge branch={f} /> <span className="mono ml-2">{f.step_count} steps</span>{f.est_cost_usd ? <span className="mono ml-2 text-faint">{fmtCost(f.est_cost_usd)}</span> : null}</td>
-                      <td className="py-1.5 pl-3"><button className="btn btn-accent" onClick={() => onFork(f.id, divergence)} title="Fork this branch at the divergence step, with any model">Fork here</button></td>
+                      <td className="py-1.5 pl-3">{!readOnly && <button className="btn btn-accent" onClick={() => onFork(f.id, divergence)} title="Fork this branch at the divergence step, with any model">Fork here</button>}</td>
                     </tr>
                   )
                 })}

@@ -1,5 +1,8 @@
 # Rewind
 
+> This copy runs read-only on Railway as a recorded showcase. The interactive deployment is
+> [Rewind-debugger](https://github.com/krishivseth/Rewind-debugger) on Replit.
+
 Rewind is a time-travel debugger for coding-agent sessions. It records every step an agent takes on
 a repository, lets you scrub back to any step and see the exact repository state and the exact
 messages the model saw, fork from that step with a different model or an edited prompt, watch the

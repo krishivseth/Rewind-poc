@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { api, type Step } from '../api'
 import { mergeStep } from '../lib/cache'
@@ -21,6 +21,8 @@ function Args({ args }: { args: Record<string, unknown> }) {
 
 function NoteEditor({ step }: { step: Step }) {
   const key = useAuth((s) => s.key)
+  const stats = useQuery({ queryKey: ['stats'], queryFn: api.stats })
+  const readOnly = stats.data?.read_only === true
   const qc = useQueryClient()
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(step.note ?? '')
@@ -33,7 +35,7 @@ function NoteEditor({ step }: { step: Step }) {
     return (
       <div className="flex items-start gap-2 px-4 py-1.5 border-b border-line text-[12px]">
         {step.note ? <p className="text-ink whitespace-pre-wrap flex-1"><span className="text-accent mr-1.5">note</span>{step.note}</p> : <span className="text-faint flex-1">No note on this step.</span>}
-        {key && <button className="text-[11px] text-muted hover:text-ink shrink-0" onClick={() => setEditing(true)}>{step.note ? 'Edit note' : 'Add note'}</button>}
+        {key && !readOnly && <button className="text-[11px] text-muted hover:text-ink shrink-0" onClick={() => setEditing(true)}>{step.note ? 'Edit note' : 'Add note'}</button>}
       </div>
     )
   }

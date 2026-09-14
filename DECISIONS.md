@@ -150,3 +150,11 @@ Choices the spec left open, and what this codebase does about them.
     bundle now fails the fork with a clear message instead of silently cloning the base repo.
 49. **Seed session titles are for humans**: "Five identical forks of one bug fix", "Same task, three
     models", "Add a feature to a small Flask app".
+
+## Railway showcase
+
+50. **The Railway deployment is a read-only showcase.** `REWIND_READ_ONLY=1` and
+    `REWIND_PUBLIC_WRITES=off` on the service: no sessions, forks, cancels, deletes or notes; the UI
+    hides those controls and says the runs are recorded. Five curated sessions, fourteen branches,
+    recorded with DeepSeek V4 Flash roots and GPT-5.4 Mini and Gemini 3.8 Flash comparison forks,
+    live in its Postgres and volume. The Replit deployment of the same code stays interactive.

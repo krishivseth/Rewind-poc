@@ -77,6 +77,8 @@ export default function SessionPage() {
   const live = !!branch && isLive(branch.status)
   useSessionEvents(session?.id, branches)
   const key = useAuth((s) => s.key)
+  const statsQ = useQuery({ queryKey: ['stats'], queryFn: api.stats })
+  const readOnly = statsQ.data?.read_only === true
   const qc = useQueryClient()
   const cancel = useMutation({ mutationFn: (id: string) => api.cancel(id), onSuccess: () => qc.invalidateQueries({ queryKey: ['session', id] }) })
   const other = sel.diffMode && sel.diffOther ? branches.find((b) => b.id === sel.diffOther) ?? null : null
@@ -135,7 +137,7 @@ export default function SessionPage() {
         case 'ArrowRight': e.preventDefault(); setStep(index + 1); break
         case 'Home': e.preventDefault(); setStep(0); break
         case 'End': e.preventDefault(); sel.setStep(null); break
-        case 'f': case 'F': sel.setForkOpen(!sel.forkOpen); break
+        case 'f': case 'F': if (!readOnly) sel.setForkOpen(!sel.forkOpen); break
         case 'd': case 'D': sel.setDiffMode(!sel.diffMode); break
         case 'c': case 'C': sel.setContextOpen(!sel.contextOpen); break
         case 'Escape': if (sel.compareParent) sel.setCompareParent(null); break
@@ -143,7 +145,7 @@ export default function SessionPage() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [index, setStep, sel])
+  }, [index, setStep, sel, readOnly])
 
   const changedHere = useMemo(() => !!file && !!step && step.files_changed.includes(file), [file, step])
 
@@ -152,7 +154,7 @@ export default function SessionPage() {
 
   return (
     <Shell title={session.title} subtitle={session.repo_slug} branch={branch ? `${shortModel(branch.model_id)}   ${fmtTokens(branch.total_input_tokens + branch.total_output_tokens)} tokens${branch.est_cost_usd ? `   ${fmtCost(branch.est_cost_usd)}` : ''}` : undefined}
-      extra={<DeleteSession sessionId={session.id} branchCount={branches.length} compact />}>
+      extra={readOnly ? undefined : <DeleteSession sessionId={session.id} branchCount={branches.length} compact />}>
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         {/* left: branches */}
         <aside className="md:w-[240px] shrink-0 border-b md:border-b-0 md:border-r border-line bg-panel flex flex-col max-h-[30vh] md:max-h-none">
@@ -170,8 +172,8 @@ export default function SessionPage() {
               steps={steps} index={Math.max(0, index)} forkStepIndex={branch.fork_step_index} live={live} onChange={setStep}
               actions={
                 <>
-                  <button className="btn btn-accent" disabled={steps.length === 0} onClick={() => sel.setForkOpen(!sel.forkOpen)} title="Fork from this step (F)">Fork here</button>
-                  {live && key && (
+                  {!readOnly && <button className="btn btn-accent" disabled={steps.length === 0} onClick={() => sel.setForkOpen(!sel.forkOpen)} title="Fork from this step (F)">Fork here</button>}
+                  {live && key && !readOnly && (
                     <button className="btn" disabled={cancel.isPending} onClick={() => cancel.mutate(branch.id)}>Cancel</button>
                   )}
                 </>
@@ -180,11 +182,11 @@ export default function SessionPage() {
           )}
           {!hintDismissed && branch && steps.length > 0 && (
             <div className="flex items-center gap-3 border-b border-line bg-accent-dim/40 px-4 py-1.5 text-[12px] text-ink">
-              <span>Drag the scrubber or use <kbd>←</kbd> <kbd>→</kbd>. <kbd>C</kbd> shows what the model saw. <kbd>F</kbd> forks from this step. Shift-click a second branch to diff.</span>
+              <span>Drag the scrubber or use <kbd>←</kbd> <kbd>→</kbd>. <kbd>C</kbd> shows what the model saw. {!readOnly && <><kbd>F</kbd> forks from this step. </>}Shift-click a second branch to diff.</span>
               <button className="btn ml-auto" onClick={dismissHint}>Got it</button>
             </div>
           )}
-          {sel.forkOpen && branch && step && (
+          {sel.forkOpen && branch && step && !readOnly && (
             <ForkPopover branch={branch} stepIndex={step.index} onClose={() => sel.setForkOpen(false)} />
           )}
           {compareParent && compareForks.length > 1 ? (

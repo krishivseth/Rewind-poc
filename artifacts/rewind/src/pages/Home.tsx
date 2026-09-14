@@ -22,6 +22,7 @@ export default function Home() {
   const key = useAuth((s) => s.key)
   const stats = useQuery({ queryKey: ['stats'], queryFn: api.stats })
   const publicMode = !key && stats.data?.public_writes === 'cheap'
+  const readOnly = stats.data?.read_only === true
   // the session with the most branches is the best first thing to open
   const featured = q.data && q.data.length ? [...q.data].sort((a, b) => b.branch_count - a.branch_count)[0] : undefined
   return (
@@ -33,24 +34,31 @@ export default function Home() {
           {submitted && <button type="button" className="btn" onClick={() => { setQuery(''); setSubmitted('') }}>Clear</button>}
         </form>
         <span className="ml-auto flex items-center gap-2">
-          {key && <span className="text-[11px] text-faint">key entered</span>}
-          <button className="btn btn-accent" onClick={() => setCreating((c) => !c)}>{key || publicMode ? 'New session' : 'Enter access key'}</button>
+          {readOnly ? (
+            <span className="mono text-[10px] uppercase tracking-wider text-muted">read-only showcase</span>
+          ) : (
+            <>
+              {key && <span className="text-[11px] text-faint">key entered</span>}
+              <button className="btn btn-accent" onClick={() => setCreating((c) => !c)}>{key || publicMode ? 'New session' : 'Enter access key'}</button>
+            </>
+          )}
         </span>
       </TopBar>
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="mx-auto max-w-[820px] p-4 space-y-3">
           <section className="border border-line bg-panel px-5 py-4 space-y-2">
-            <p className="text-[15px] text-ink">Rewind records a coding agent step by step, so you can scrub back to any moment, see exactly what the model saw, and fork from there.</p>
+            <p className="text-[15px] text-ink">Rewind records a coding agent step by step, so you can scrub back to any moment, see exactly what the model saw, and {readOnly ? 'compare the branches that forked from there' : 'fork from there'}.</p>
             <p className="text-[13px] text-muted">
-              Open a session, drag the scrubber, press <kbd>C</kbd> for the model's context, then <kbd>F</kbd> to fork it with another model or prompt and watch both runs side by side.
-              Under a branch with forks, "compare" lines them up and marks where they diverged.
+              Open a session, drag the scrubber, press <kbd>C</kbd> for the model's context{readOnly ? '.' : <>, then <kbd>F</kbd> to fork it with another model or prompt and watch both runs side by side.</>}
+              {' '}Under a branch with forks, "compare" lines them up and marks where they diverged; shift-click two branches to diff their code.
+              {readOnly && ' This deployment is a recorded showcase: the runs below were captured with cheap models and cannot be changed.'}
             </p>
             <p className="text-[13px] text-muted flex flex-wrap items-center gap-x-3 gap-y-1">
               {featured && <Link to={`/sessions/${featured.id}`} className="btn btn-accent">Start here: {featured.title}</Link>}
-              {publicMode && <span>Visitors can start sessions and forks on {stats.data?.cheap_model?.split('/').pop()} without a key.</span>}
+              {publicMode && !readOnly && <span>Visitors can start sessions and forks on {stats.data?.cheap_model?.split('/').pop()} without a key.</span>}
             </p>
           </section>
-          {creating && <NewSessionForm onClose={() => setCreating(false)} />}
+          {creating && !readOnly && <NewSessionForm onClose={() => setCreating(false)} />}
           {submitted.length >= 2 && (
             <div className="border border-line rounded bg-panel">
               <div className="pane-title">
@@ -111,7 +119,7 @@ export default function Home() {
                   </Link>
                   {/* sibling of the link, not a child: buttons inside anchors are invalid and click-through prone */}
                   <div className="absolute right-4 bottom-3 flex items-center">
-                    <DeleteSession sessionId={s.id} branchCount={s.branch_count} compact onDone={() => void q.refetch()} />
+                    {!readOnly && <DeleteSession sessionId={s.id} branchCount={s.branch_count} compact onDone={() => void q.refetch()} />}
                   </div>
                 </li>
               )
