@@ -49,8 +49,14 @@ export default function Home() {
             <p className="text-[13px] text-muted">
               Open a session, drag the scrubber, press <kbd>C</kbd> for the model's context{readOnly ? '.' : <>, then <kbd>F</kbd> to fork it with another model or prompt and watch both runs side by side.</>}
               {' '}Under a branch with forks, "compare" lines them up and marks where they diverged; shift-click two branches to diff their code.
-              {readOnly && ' This deployment is a recorded showcase: the runs below were captured with cheap models and cannot be changed.'}
+              {readOnly && ' The runs below were recorded with cheap models and cannot be changed.'}
             </p>
+            {readOnly && (
+              <p className="text-[13px] text-muted border-t border-line pt-2">
+                Starting new sessions and forks is switched off in this proof of concept to keep token costs down. In an IDE this would be the live path: the agent runs, every step is recorded, and you fork from wherever it went wrong.
+                To try that, <a className="text-accent hover:underline" href="https://github.com/krishivseth/Rewind-poc" target="_blank" rel="noreferrer">run the project locally from GitHub</a> with your own OpenRouter key and start sessions against any of the models.
+              </p>
+            )}
             <p className="text-[13px] text-muted flex flex-wrap items-center gap-x-3 gap-y-1">
               {featured && <Link to={`/sessions/${featured.id}`} className="btn btn-accent">Start here: {featured.title}</Link>}
               {publicMode && !readOnly && <span>Visitors can start sessions and forks on {stats.data?.cheap_model?.split('/').pop()} without a key.</span>}
