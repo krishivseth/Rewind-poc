@@ -34,9 +34,7 @@ export default function Home() {
           {submitted && <button type="button" className="btn" onClick={() => { setQuery(''); setSubmitted('') }}>Clear</button>}
         </form>
         <span className="ml-auto flex items-center gap-2">
-          {readOnly ? (
-            <span className="mono text-[10px] uppercase tracking-wider text-muted">read-only showcase</span>
-          ) : (
+          {readOnly ? null : (
             <>
               {key && <span className="text-[11px] text-faint">key entered</span>}
               <button className="btn btn-accent" onClick={() => setCreating((c) => !c)}>{key || publicMode ? 'New session' : 'Enter access key'}</button>
