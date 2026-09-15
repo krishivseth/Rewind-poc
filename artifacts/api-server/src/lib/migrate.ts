@@ -23,6 +23,7 @@ const statements = [
   `alter table branches add column if not exists error text`,
   `alter table branches add column if not exists created_by text`,
   `alter table branches add column if not exists lease_expires_at timestamptz`,
+  `alter table branches add column if not exists stop_reason text`,
   `alter table steps add column if not exists note text`,
   // old rows had nullable token columns
   `update steps set input_tokens = 0 where input_tokens is null`,

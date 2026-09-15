@@ -6,7 +6,7 @@ const FileViewer = lazy(() => import('../components/FileViewer'))
 const DiffView = lazy(() => import('../components/DiffView'))
 const CompareView = lazy(() => import('../components/CompareView'))
 import { useParams, useSearchParams } from 'react-router-dom'
-import { api, isLive } from '../api'
+import { api, isLive, type Branch } from '../api'
 import BranchTree from '../components/BranchTree'
 import DeleteSession from '../components/DeleteSession'
 import { resolveStep } from '../lib/compare'
@@ -19,7 +19,7 @@ import FileTree from '../components/FileTree'
 import Scrubber from '../components/Scrubber'
 import StepCard from '../components/StepCard'
 import TopBar from '../components/TopBar'
-import { fmtCost, fmtTokens, shortModel } from '../lib/steps'
+import { STOP_LABEL, fmtCost, fmtTokens, isSoftStop, shortModel } from '../lib/steps'
 import { useSelection } from '../store'
 
 export default function SessionPage() {
@@ -83,6 +83,11 @@ export default function SessionPage() {
   const readOnly = statsQ.data?.read_only === true
   const qc = useQueryClient()
   const cancel = useMutation({ mutationFn: (id: string) => api.cancel(id), onSuccess: () => qc.invalidateQueries({ queryKey: ['session', id] }) })
+  // a soft stop is a pause: continuing is a fork from the last step with the same model
+  const cont = useMutation({
+    mutationFn: (b: Branch) => api.fork(b.id, { step_index: Math.max(0, b.step_count - 1), model_id: b.model_id, count: 1 }),
+    onSuccess: async (res) => { await qc.invalidateQueries({ queryKey: ['session', id] }); if (res.branches[0]) sel.selectBranch(res.branches[0].id) },
+  })
   const other = sel.diffMode && sel.diffOther ? branches.find((b) => b.id === sel.diffOther) ?? null : null
 
   const stepsQ = useQuery({
@@ -208,8 +213,17 @@ export default function SessionPage() {
               {branch?.status === 'queued' ? 'Queued. Steps appear when the branch starts.' : stepsQ.isLoading ? 'Loading steps…' : 'No steps yet.'}
             </div>
           )}
-          {branch?.error && (
-            <div className={`border-t border-line px-4 py-1.5 text-[11px] ${branch.status === 'done' ? 'text-muted' : 'text-bad'}`}>{branch.status}: {branch.error}</div>
+          {branch && (branch.error || (branch.stop_reason && branch.stop_reason !== 'completed')) && (
+            <div className={`flex items-center gap-3 border-t border-line px-4 py-1.5 text-[11px] ${branch.status === 'failed' ? 'text-bad' : 'text-muted'}`}>
+              <span className="mono uppercase tracking-wider shrink-0">{STOP_LABEL[branch.stop_reason ?? ''] ?? branch.status}</span>
+              <span className="truncate">{branch.error}</span>
+              {isSoftStop(branch.stop_reason) && !readOnly && (statsQ.data?.writes === 'open') && (
+                <button className="btn btn-accent ml-auto shrink-0" disabled={cont.isPending}
+                  onClick={() => cont.mutate(branch)} title="Fork from the last step with the same model and keep going">
+                  {cont.isPending ? 'Continuing…' : 'Continue from here'}
+                </button>
+              )}
+            </div>
           )}
           {sel.contextOpen && branch && step && (
             <ContextDrawer branchId={branch.id} index={step.index} onClose={() => sel.setContextOpen(false)} />

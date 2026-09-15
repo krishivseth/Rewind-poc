@@ -12,6 +12,7 @@ export interface Branch {
   task_prompt: string
   status: BranchStatus
   error: string | null
+  stop_reason?: 'completed' | 'call_limit' | 'loop' | 'token_budget' | 'wall_clock' | 'cancelled' | 'provider_error' | 'crash' | null
   step_count: number
   total_input_tokens: number
   total_output_tokens: number

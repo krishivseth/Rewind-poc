@@ -101,4 +101,5 @@ You have four tools: read_file(path), write_file(path, content), edit_file(path,
 run only accepts the named commands listed in the repository's .rewind.json (for example "test"); any other command is rejected.
 Start with read_file(".") to list the repository, then read the relevant files, make focused edits, and run the "test" command before you finish.
 Do not repeat a call whose result you already have.
+If the repository has no tests for what you built, write a small pytest file for it; a test run that reports "no tests ran" is not a failure.
 When the task is complete, reply with a short summary and no tool calls.`;

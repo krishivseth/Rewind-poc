@@ -34,6 +34,8 @@ export const branches = pgTable("branches", {
   taskPrompt: text("task_prompt").notNull(),
   status: branchStatus("status").notNull().default("queued"),
   error: text("error"),
+  // why the run stopped: completed | call_limit | loop | token_budget | wall_clock | cancelled | provider_error | crash
+  stopReason: text("stop_reason"),
   stepCount: integer("step_count").notNull().default(0),
   totalInputTokens: integer("total_input_tokens").notNull().default(0),
   totalOutputTokens: integer("total_output_tokens").notNull().default(0),

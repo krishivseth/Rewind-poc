@@ -74,6 +74,7 @@ test("create session, run, inspect, stream", async () => {
   const b = await waitDone(root);
   assert.equal(b.status, "done", JSON.stringify(b));
   assert.equal(b.step_count, 8);
+  assert.equal(b.stop_reason, "completed");
   assert.equal(b.total_input_tokens, 500);
   const steps = (await get(`/api/branches/${root}/steps`)).data as Array<Record<string, unknown>>;
   assert.deepEqual(steps.map((s) => s.kind), ["user", "assistant", "tool_call", "tool_result", "assistant", "tool_call", "tool_result", "assistant"]);
@@ -196,8 +197,10 @@ test("loop detection", async () => {
   setClient({ complete: async (_m, messages) => ({ message: { role: "assistant", content: null, tool_calls: [{ id: `c${messages.length}`, type: "function", function: { name: "run", arguments: JSON.stringify({ command: "test" }) } }] }, inputTokens: 10, outputTokens: 1 }) });
   const r = await newSession("loop");
   const b = await waitDone(r.data.root_branch_id);
-  assert.equal(b.status, "failed"); assert.match(b.error, /stuck in a loop/);
-  const results = ((await get(`/api/branches/${b.id}/steps`)).data as Array<{ kind: string; tool_result: string }>).filter((s) => s.kind === "tool_result");
+  assert.equal(b.status, "done"); assert.equal(b.stop_reason, "loop"); assert.match(b.error, /same arguments/);
+  const all = (await get(`/api/branches/${b.id}/steps`)).data as Array<{ kind: string; tool_result: string; content: { content?: string } }>;
+  assert.ok(all.some((s) => s.kind === "user" && /This run is stopping/.test(s.content.content ?? "")));
+  const results = all.filter((s) => s.kind === "tool_result");
   // the test command fails every time, so the branch ends one attempt early
   assert.equal(results.length, settings.loopFailAfter - 1);
   assert.ok(results.some((r) => /\[rewind\].*failed each time/.test(r.tool_result)));
@@ -302,9 +305,9 @@ test("signed-in mode: GitHub session unlocks cheap-model writes with a shorter r
   settings.publicMaxModelCalls = 2;
   r = await j("POST", "/api/sessions", body, { Cookie: cookie });
   const capped = await waitDone(r.data.root_branch_id);
-  assert.equal(capped.status, "done"); assert.match(capped.error, /2-call limit/);
+  assert.equal(capped.status, "done"); assert.equal(capped.stop_reason, "call_limit"); assert.match(capped.error, /2-call limit/);
   const cappedSteps = (await get(`/api/branches/${capped.id}/steps`)).data as Array<{ kind: string; content: { content?: string } }>;
-  assert.ok(cappedSteps.some((s) => s.kind === "user" && /reached the limit/.test(s.content.content ?? "")));
+  assert.ok(cappedSteps.some((s) => s.kind === "user" && /This run is stopping/.test(s.content.content ?? "")));
   assert.equal(cappedSteps.filter((s) => s.kind === "assistant").length, 2);
   settings.publicMaxModelCalls = 20;
   settings.publicWrites = "cheap";

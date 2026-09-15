@@ -188,3 +188,11 @@ Choices the spec left open, and what this codebase does about them.
     marked failed for running them once more. Keyless branches get 20 calls (was 15); the key gets 30.
 57. **The blank seed repo ships one passing placeholder test**, so pytest exits 0 before the agent
     has written anything; "no tests ran" (exit 5) read as failure and sent models down the wrong path.
+58. **Stop reason is separate from status.** Every branch records why it stopped: `completed`,
+    `call_limit`, `loop`, `token_budget`, `wall_clock`, `cancelled`, `provider_error`, `crash`. The
+    four limits are soft stops: the run makes one tool-less wrap-up call for a summary and ends
+    `done`, the UI shows a "paused" badge with the reason, and a Continue button forks from the last
+    step with the same model. Only provider errors and crashes are `failed`. A visitor's run hitting
+    a budget is a pause they can resume, not a red failure on a demo.
+59. **The system prompt covers the no-tests case**: write a small pytest file; "no tests ran" is not
+    a failure. Both this and the placeholder test came from watching a signed-in run on staging.

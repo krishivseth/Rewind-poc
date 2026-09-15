@@ -45,3 +45,9 @@ export function fmtDuration(startIso: string, endIso: string | null): string {
 }
 
 export const fmtCost = (usd: number | undefined) => (usd === undefined ? '' : usd < 0.01 ? `$${usd.toFixed(4)}` : `$${usd.toFixed(2)}`)
+
+export const STOP_LABEL: Record<string, string> = {
+  call_limit: 'paused at the call limit', loop: 'paused: repeating itself', token_budget: 'paused at the token budget',
+  wall_clock: 'paused at the time limit', provider_error: 'model provider error', crash: 'internal error', cancelled: 'cancelled',
+}
+export const isSoftStop = (r: string | null | undefined) => r === 'call_limit' || r === 'loop' || r === 'token_budget' || r === 'wall_clock'

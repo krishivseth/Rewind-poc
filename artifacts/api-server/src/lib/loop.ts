@@ -14,14 +14,17 @@ const cancelled = new Set<string>();
 export const requestCancel = (id: string) => { cancelled.add(id); };
 export const isCancelRequested = (id: string) => cancelled.has(id);
 
+export type StopReason = "completed" | "call_limit" | "loop" | "token_budget" | "wall_clock" | "cancelled" | "provider_error" | "crash";
+const SOFT: StopReason[] = ["call_limit", "loop", "token_budget", "wall_clock"];
+
 class BranchStop extends Error {
-  constructor(public status: "failed" | "cancelled", public reason: string) { super(reason); }
+  constructor(public stop: StopReason, public reason: string) { super(reason); }
 }
 
 export function branchView(b: Branch, queuePosition: number | null = null): Record<string, unknown> {
   return {
     id: b.id, session_id: b.sessionId, parent_branch_id: b.parentBranchId, fork_step_index: b.forkStepIndex,
-    model_id: b.modelId, task_prompt: b.taskPrompt, status: b.status, error: b.error, step_count: b.stepCount,
+    model_id: b.modelId, task_prompt: b.taskPrompt, status: b.status, error: b.error, stop_reason: b.stopReason, step_count: b.stepCount,
     total_input_tokens: b.totalInputTokens, total_output_tokens: b.totalOutputTokens, bundle_key: b.bundleKey,
     est_cost_usd: Number(estimateCostUsd(b.modelId, b.totalInputTokens, b.totalOutputTokens).toFixed(4)),
     created_at: b.createdAt.toISOString(), finished_at: b.finishedAt?.toISOString() ?? null,
@@ -38,9 +41,10 @@ export function stepView(s: Step): Record<string, unknown> {
   };
 }
 
-async function setStatus(branchId: string, status: Branch["status"], opts: { error?: string | null; finished?: boolean; bundleKey?: string | null } = {}): Promise<Branch> {
+async function setStatus(branchId: string, status: Branch["status"], opts: { error?: string | null; finished?: boolean; bundleKey?: string | null; stopReason?: StopReason | null } = {}): Promise<Branch> {
   const patch: Partial<Branch> = { status };
   if (opts.error !== undefined) patch.error = opts.error;
+  if (opts.stopReason !== undefined) patch.stopReason = opts.stopReason;
   if (opts.finished) { patch.finishedAt = new Date(); patch.leaseExpiresAt = null; }
   else patch.leaseExpiresAt = new Date(Date.now() + settings.leaseSeconds * 1000);
   if (opts.bundleKey) patch.bundleKey = opts.bundleKey;
@@ -71,6 +75,8 @@ export async function runBranch(branchId: string, client?: ModelClient): Promise
   let wt: string | null = null;
   let finalStatus: "done" | "failed" | "cancelled" = "failed";
   let finalError: string | null = null;
+  let stopReason: StopReason = "crash";
+  let wrapUp: ((why: string) => Promise<void>) | null = null;
   let heartbeat: NodeJS.Timeout | null = null;
 
   try {
@@ -98,6 +104,16 @@ export async function runBranch(branchId: string, client?: ModelClient): Promise
     }
 
     const messages = messagesFromSteps(branch.systemPrompt, existing);
+    wrapUp = async (why: string) => {
+      const ask = { role: "user", content: `This run is stopping (${why}). Do not call any tools. Reply with a short summary of what you changed, whether the tests pass, and what is left to do.` };
+      messages.push(ask);
+      await recordStep(branchId, { kind: "user", content: ask });
+      const t0 = Date.now();
+      const c = await model.complete(branch.modelId, messages, [], settings.maxOutputTokensPerCall);
+      const a = c.message as Record<string, unknown>;
+      delete a.tool_calls;
+      await recordStep(branchId, { kind: "assistant", content: a, inputTokens: c.inputTokens, outputTokens: c.outputTokens, latencyMs: Date.now() - t0 });
+    };
     let turns = 0;
     let totalTokens = branch.totalInputTokens + branch.totalOutputTokens;
     let repeats: string[] = [];
@@ -108,33 +124,26 @@ export async function runBranch(branchId: string, client?: ModelClient): Promise
     };
     const checkLimits = (phase: string) => {
       if (cancelled.has(branchId)) throw new BranchStop("cancelled", `cancelled before ${phase}`);
-      if (Date.now() - started > settings.wallClockSecondsPerBranch * 1000) throw new BranchStop("failed", `wall clock limit ${settings.wallClockSecondsPerBranch}s hit`);
-      if (totalTokens >= settings.maxTotalTokensPerBranch) throw new BranchStop("failed", `token limit ${settings.maxTotalTokensPerBranch} hit`);
+      if (Date.now() - started > settings.wallClockSecondsPerBranch * 1000) throw new BranchStop("wall_clock", `stopped after ${settings.wallClockSecondsPerBranch}s of wall-clock time`);
+      if (totalTokens >= settings.maxTotalTokensPerBranch) throw new BranchStop("token_budget", `stopped at the branch token budget of ${settings.maxTotalTokensPerBranch}`);
     };
 
     for (;;) {
       checkLimits("model call");
       const isPublic = !!branch.createdBy && (branch.createdBy.startsWith("public:") || branch.createdBy.startsWith("user:"));
       const maxCalls = isPublic ? Math.min(settings.maxModelCalls, settings.publicMaxModelCalls) : settings.maxModelCalls;
-      if ((await sessionTokens()) >= settings.maxTotalTokensPerSession) throw new BranchStop("failed", `session token budget ${settings.maxTotalTokensPerSession} hit`);
-      // the last allowed call is a wrap-up: no tools, just a summary of where things stand
-      const wrapUp = turns >= maxCalls - 1;
-      if (wrapUp) {
-        const ask = { role: "user", content: `You have reached the limit of ${maxCalls} model calls for this run. Do not call any tools. Reply with a short summary of what you changed, whether the tests pass, and what is left to do.` };
-        messages.push(ask);
-        await recordStep(branchId, { kind: "user", content: ask });
-      }
+      if ((await sessionTokens()) >= settings.maxTotalTokensPerSession) throw new BranchStop("token_budget", `stopped at the session token budget of ${settings.maxTotalTokensPerSession}`);
+      // the last allowed call is reserved for the wrap-up
+      if (turns >= maxCalls - 1) throw new BranchStop("call_limit", `stopped at the ${maxCalls}-call limit`);
       const t0 = Date.now();
-      const completion = await model.complete(branch.modelId, messages, wrapUp ? [] : (tools.TOOL_SCHEMAS as unknown as unknown[]), settings.maxOutputTokensPerCall);
+      const completion = await model.complete(branch.modelId, messages, tools.TOOL_SCHEMAS as unknown as unknown[], settings.maxOutputTokensPerCall);
       turns += 1;
       totalTokens += completion.inputTokens + completion.outputTokens;
       const assistant = completion.message as Record<string, unknown>;
-      if (wrapUp) delete assistant.tool_calls; // a model that ignores the instruction still ends here
       await recordStep(branchId, { kind: "assistant", content: assistant, inputTokens: completion.inputTokens, outputTokens: completion.outputTokens, latencyMs: Date.now() - t0 });
       messages.push(assistant);
       const toolCalls = (assistant.tool_calls as ToolCall[] | undefined) ?? [];
-      if (wrapUp) { finalStatus = "done"; finalError = `stopped at the ${maxCalls}-call limit; the model was asked to summarise`; break; }
-      if (!toolCalls.length) { finalStatus = "done"; break; }
+      if (!toolCalls.length) { finalStatus = "done"; stopReason = "completed"; break; }
 
       for (const tc of toolCalls) {
         checkLimits("tool call");
@@ -172,7 +181,7 @@ export async function runBranch(branchId: string, client?: ModelClient): Promise
         const failAfter = failed ? Math.max(2, settings.loopFailAfter - 1) : settings.loopFailAfter;
         if (repeats.length >= failAfter) {
           await record(output);
-          throw new BranchStop("failed", `stuck in a loop: ${name} was called with the same arguments ${repeats.length} times in a row`);
+          throw new BranchStop("loop", `stopped: ${name} was called with the same arguments ${repeats.length} times in a row`);
         }
         if (repeats.length >= failAfter - 1) {
           output += `\n\n[rewind] You have made this exact call ${repeats.length} times in a row${failed ? " and it failed each time" : ""}. Repeating it again will end the run. Do something different: read a file you have not read, make an edit, or finish with a summary.`;
@@ -182,8 +191,21 @@ export async function runBranch(branchId: string, client?: ModelClient): Promise
       }
     }
   } catch (e) {
-    if (e instanceof BranchStop) { finalStatus = e.status; finalError = e.reason; }
-    else { logger.error({ err: e, branchId }, "branch crashed"); finalStatus = "failed"; finalError = `${(e as Error).name}: ${(e as Error).message}`; }
+    if (e instanceof BranchStop) {
+      stopReason = e.stop;
+      finalError = e.reason;
+      if (e.stop === "cancelled") finalStatus = "cancelled";
+      else if (SOFT.includes(e.stop)) {
+        // a soft stop is a pause, not a failure: ask for a summary without tools, then end done
+        finalStatus = "done";
+        if (wrapUp) { try { await wrapUp(e.reason); } catch (w) { logger.warn({ err: w, branchId }, "wrap-up call failed"); } }
+      } else finalStatus = "failed";
+    } else {
+      const msg = `${(e as Error).name}: ${(e as Error).message}`;
+      const provider = /OpenAI|OpenRouter|APIError|status code|402|429|5\d\d/i.test(msg);
+      logger.error({ err: e, branchId }, "branch crashed");
+      finalStatus = "failed"; finalError = msg; stopReason = provider ? "provider_error" : "crash";
+    }
   }
 
   if (heartbeat) clearInterval(heartbeat);
@@ -197,7 +219,7 @@ export async function runBranch(branchId: string, client?: ModelClient): Promise
     logger.error({ err: e, branchId }, "finalize failed");
     finalError = `${finalError ?? ""} (finalize failed: ${(e as Error).message})`;
   }
-  const row = await setStatus(branchId, finalStatus, { error: finalError, finished: true, bundleKey });
+  const row = await setStatus(branchId, finalStatus, { error: finalError, finished: true, bundleKey, stopReason });
   cancelled.delete(branchId);
   logger.info({
     branchId, status: finalStatus, model: row.modelId, steps: row.stepCount, tokensIn: row.totalInputTokens, tokensOut: row.totalOutputTokens,
