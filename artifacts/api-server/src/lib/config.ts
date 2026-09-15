@@ -60,8 +60,15 @@ export const settings = {
   readOnly: (process.env.REWIND_READ_ONLY ?? "0") === "1",
   // "cheap": visitors without the key may create sessions and forks on the cheap model, within the
   // per-IP rate limit and PUBLIC_DAILY_TOKEN_CAP. "off": every write needs the key (the spec's default).
-  publicWrites: (process.env.REWIND_PUBLIC_WRITES ?? "cheap") as "cheap" | "off",
+  publicWrites: (process.env.REWIND_PUBLIC_WRITES ?? "cheap") as "cheap" | "signed_in" | "off",
   publicDailyTokenCap: num("PUBLIC_DAILY_TOKEN_CAP", 500_000),
+  // shorter runs for visitors: forks of a half-finished run rarely need more
+  publicMaxModelCalls: num("PUBLIC_MAX_MODEL_CALLS", 15),
+  // "signed_in": keyless writes need a GitHub sign-in; "cheap": anyone; "off": key only
+  githubClientId: process.env.GITHUB_CLIENT_ID ?? "",
+  githubClientSecret: process.env.GITHUB_CLIENT_SECRET ?? "",
+  sessionSecret: process.env.SESSION_SECRET ?? "",
+  publicUrl: process.env.PUBLIC_URL ?? "",
 };
 
 export interface Model {

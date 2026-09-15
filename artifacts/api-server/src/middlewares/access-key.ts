@@ -1,6 +1,7 @@
 /** Access key check and in-memory write rate limiting. Viewing is public; writes need X-Rewind-Key. */
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
+import type { SessionUser } from "../lib/auth";
 import { cheapestModel, settings } from "../lib/config";
 
 export const keyId = (key: string) => createHash("sha256").update(key).digest("hex").slice(0, 16);
@@ -18,13 +19,18 @@ export function validKey(key: string | undefined): boolean {
 export function requireKeyOrPublic(req: Request, res: Response, next: NextFunction): void {
   const key = req.header("x-rewind-key");
   if (validKey(key)) { res.locals.keyId = keyId(key!); res.locals.public = false; next(); return; }
-  if (settings.publicWrites !== "cheap") { requireKey(req, res, next); return; }
+  const user = res.locals.user as SessionUser | null | undefined;
+  if (settings.publicWrites === "off" || (settings.publicWrites === "signed_in" && !user)) {
+    if (settings.publicWrites === "signed_in" && !key) { res.status(401).json({ detail: "Sign in with GitHub to fork, or enter the access key.", sign_in: true }); return; }
+    requireKey(req, res, next); return;
+  }
   const model = (req.body as { model_id?: unknown } | undefined)?.model_id;
   if (model !== cheapestModel().id) {
-    res.status(401).json({ detail: `Visitors can run ${cheapestModel().name} without a key. Enter the access key to use other models.` });
+    res.status(401).json({ detail: `${user ? "Signed-in visitors" : "Visitors"} can run ${cheapestModel().name}. Enter the access key to use other models.` });
     return;
   }
-  res.locals.keyId = `public:${clientIp(req)}`;
+  // quota bucket: the GitHub account when signed in, otherwise the IP
+  res.locals.keyId = user ? `user:${user.id}` : `public:${clientIp(req)}`;
   res.locals.public = true;
   next();
 }

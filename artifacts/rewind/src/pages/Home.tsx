@@ -21,7 +21,8 @@ export default function Home() {
   const search = useQuery({ queryKey: ['search', submitted], queryFn: () => api.search(submitted), enabled: submitted.length >= 2 })
   const key = useAuth((s) => s.key)
   const stats = useQuery({ queryKey: ['stats'], queryFn: api.stats })
-  const publicMode = !key && stats.data?.public_writes === 'cheap'
+  const publicMode = !key && (stats.data?.public_writes === 'cheap' || (stats.data?.public_writes === 'signed_in' && !!stats.data?.me))
+  const signedInMode = stats.data?.public_writes === 'signed_in'
   const readOnly = stats.data?.read_only === true
   // the session with the most branches is the best first thing to open
   const featured = q.data && q.data.length ? [...q.data].sort((a, b) => b.branch_count - a.branch_count)[0] : undefined
@@ -37,7 +38,7 @@ export default function Home() {
           {readOnly ? null : (
             <>
               {key && <span className="text-[11px] text-faint">key entered</span>}
-              <button className="btn btn-accent" onClick={() => setCreating((c) => !c)}>{key || publicMode ? 'New session' : 'Enter access key'}</button>
+              <button className="btn btn-accent" onClick={() => setCreating((c) => !c)}>{key || publicMode || signedInMode ? 'New session' : 'Enter access key'}</button>
             </>
           )}
         </span>
@@ -60,6 +61,7 @@ export default function Home() {
             <p className="text-[13px] text-muted flex flex-wrap items-center gap-x-3 gap-y-1">
               {featured && <Link to={`/sessions/${featured.id}`} className="btn btn-accent">Start here: {featured.title}</Link>}
               {publicMode && !readOnly && <span>Visitors can start sessions and forks on {stats.data?.cheap_model?.split('/').pop()} without a key.</span>}
+              {signedInMode && !publicMode && !readOnly && <span>Sign in with GitHub to fork any run on {stats.data?.cheap_model?.split('/').pop()}, within a small shared daily budget.</span>}
             </p>
           </section>
           {creating && !readOnly && <NewSessionForm onClose={() => setCreating(false)} />}

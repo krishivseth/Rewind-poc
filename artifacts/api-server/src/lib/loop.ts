@@ -114,7 +114,9 @@ export async function runBranch(branchId: string, client?: ModelClient): Promise
 
     for (;;) {
       checkLimits("model call");
-      if (turns >= settings.maxModelCalls) throw new BranchStop("failed", `max steps ${settings.maxModelCalls} hit`);
+      const isPublic = !!branch.createdBy && (branch.createdBy.startsWith("public:") || branch.createdBy.startsWith("user:"));
+      const maxCalls = isPublic ? Math.min(settings.maxModelCalls, settings.publicMaxModelCalls) : settings.maxModelCalls;
+      if (turns >= maxCalls) throw new BranchStop("failed", `max steps ${maxCalls} hit`);
       if ((await sessionTokens()) >= settings.maxTotalTokensPerSession) throw new BranchStop("failed", `session token budget ${settings.maxTotalTokensPerSession} hit`);
       const t0 = Date.now();
       const completion = await model.complete(branch.modelId, messages, tools.TOOL_SCHEMAS as unknown as unknown[], settings.maxOutputTokensPerCall);

@@ -12,6 +12,7 @@ import * as services from "../lib/services";
 import { requireKey, requireKeyOrPublic, takeBranchQuota, validKey } from "../middlewares/access-key";
 import { logger } from "../lib/logger";
 import { sandboxPythonStatus } from "../lib/sandbox-python";
+import { finishLogin, githubConfigured, logout, startLogin, type SessionUser } from "../lib/auth";
 
 const router: IRouter = Router();
 const TERMINAL = new Set(["done", "failed", "cancelled"]);
@@ -116,7 +117,15 @@ router.get("/search", wrap(async (req, res) => {
   res.json({ q, results: await services.searchSteps(q, limit) });
 }));
 
-router.get("/stats", wrap(async (_req, res) => { res.json(await services.stats()); }));
+router.get("/stats", wrap(async (_req, res) => {
+  const user = res.locals.user as SessionUser | null | undefined;
+  res.json({ ...(await services.stats()), sign_in: githubConfigured() ? "github" : "off", me: user ? { login: user.login, avatar: user.avatar } : null });
+}));
+
+router.get("/auth/github", startLogin);
+router.get("/auth/github/callback", wrap(finishLogin));
+router.post("/auth/logout", logout);
+router.get("/auth/me", (_req, res) => { const u = res.locals.user as SessionUser | null | undefined; res.json(u ? { login: u.login, avatar: u.avatar } : null); });
 
 router.get("/auth/check", (req, res) => {
   if (validKey(req.header("x-rewind-key"))) { res.json({ ok: true }); return; }

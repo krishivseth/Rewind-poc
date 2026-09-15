@@ -2,6 +2,8 @@ import express, { type Express } from "express";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import compression from "compression";
+import cookieParser from "cookie-parser";
+import { sessionMiddleware } from "./lib/auth";
 import cors from "cors";
 import pinoHttp from "pino-http";
 import router from "./routes";
@@ -23,6 +25,8 @@ app.use(pinoHttp({
 app.use(compression({ threshold: 1024, filter: (req, res) => !req.path.endsWith("/events") && compression.filter(req, res) }));
 app.use(cors({ origin: true }));
 app.use(express.json({ limit: "1mb" }));
+app.use(cookieParser());
+app.use(sessionMiddleware);
 app.use("/api", router);
 
 // Outside Replit's path router the API process also serves the built frontend, so one process is enough.

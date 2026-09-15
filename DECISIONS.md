@@ -168,3 +168,12 @@ Choices the spec left open, and what this codebase does about them.
     the ten languages the seed repos use instead of the full package, 4.0 MB down to 2.7 MB raw.
     A first visit that opens a file costs about 0.8 MB of egress instead of 4.3 MB; a return visit
     costs a few kilobytes of API JSON.
+53. **Sign in with GitHub** (`REWIND_PUBLIC_WRITES=signed_in`). Keyless writes need a GitHub
+    session: the OAuth token is used once to read the profile and dropped; the session is an
+    HMAC-signed cookie with id, login and avatar, 30 days. Signed-in visitors get the cheap model,
+    a per-account quota (the same ten an hour as a key, keyed by GitHub id instead of IP), the shared
+    public daily budget, and `PUBLIC_MAX_MODEL_CALLS` (15) instead of 30. The access key still
+    unlocks everything. Chosen over Clerk (the original Replit sign-in) because it needs one OAuth
+    app and no vendor, and over a CAPTCHA because an accountable account deters bots better.
+54. **Two Railway environments.** `production` is the live showcase; `staging` gets its own
+    Postgres and volume for testing deploys of the same code before they reach production.

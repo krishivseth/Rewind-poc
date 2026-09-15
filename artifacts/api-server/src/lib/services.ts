@@ -238,7 +238,7 @@ export async function stats() {
     max_concurrent_branches: settings.maxConcurrentBranches, session_token_budget: settings.maxTotalTokensPerSession,
     sandbox_python: py, storage_backend: process.env.PRIVATE_OBJECT_DIR ? "object" : "local",
     read_only: settings.readOnly,
-    public_writes: settings.publicWrites, public_daily_token_cap: settings.publicDailyTokenCap,
+    public_writes: settings.publicWrites, public_daily_token_cap: settings.publicDailyTokenCap, public_max_model_calls: settings.publicMaxModelCalls,
     cheap_model: (await import("./config")).cheapestModel().id,
     // what a visitor can do right now, and why not
     writes: settings.readOnly ? "read_only" : !py.ready ? "warming_up" : "open",

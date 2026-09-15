@@ -11,6 +11,7 @@ import { cheapestModel, settings } from "../src/lib/config";
 import * as scheduler from "../src/lib/scheduler";
 import { branchLimiter } from "../src/middlewares/access-key";
 import { sandboxPythonStatus, setSandboxBin } from "../src/lib/sandbox-python";
+import { encodeSession } from "../src/lib/auth";
 import { closeDb, python, resetDb, seedRepo } from "./support";
 
 const KEY = { "X-Rewind-Key": "test-key" };
@@ -280,6 +281,30 @@ test("public cheap-model writes", async () => {
   assert.equal(r.status, 401);
   settings.publicWrites = "cheap";
   assert.equal((await get("/api/stats")).data.public_writes, "cheap");
+});
+
+test("signed-in mode: GitHub session unlocks cheap-model writes with a shorter run", async () => {
+  settings.publicWrites = "signed_in";
+  settings.sessionSecret = "test-session-secret";
+  const body = { repo_id: repoId, title: "t", task_prompt: "x", model_id: cheapestModel().id };
+  let r = await j("POST", "/api/sessions", body, {});
+  assert.equal(r.status, 401); assert.equal(r.data.sign_in, true);
+  const cookie = `rewind_session=${encodeSession({ id: "42", login: "octocat", avatar: null })}`;
+  const me = await fetch(`${base}/api/auth/me`, { headers: { Cookie: cookie } }).then((x) => x.json());
+  assert.equal((me as { login: string }).login, "octocat");
+  assert.equal((await j("GET", "/api/auth/me", undefined, { Cookie: "rewind_session=tampered.sig" })).data, null);
+  r = await j("POST", "/api/sessions", body, { Cookie: cookie });
+  assert.equal(r.status, 201, JSON.stringify(r.data));
+  assert.equal((await j("POST", "/api/sessions", { ...body, model_id: "anthropic/claude-sonnet-5" }, { Cookie: cookie })).status, 401);
+  const done = await waitDone(r.data.root_branch_id);
+  assert.equal(done.status, "done");
+  // a public branch is capped at PUBLIC_MAX_MODEL_CALLS
+  settings.publicMaxModelCalls = 1;
+  r = await j("POST", "/api/sessions", body, { Cookie: cookie });
+  const capped = await waitDone(r.data.root_branch_id);
+  assert.equal(capped.status, "failed"); assert.match(capped.error, /max steps 1/);
+  settings.publicMaxModelCalls = 15;
+  settings.publicWrites = "cheap";
 });
 
 test("fake client sanity", () => { assert.ok(new FakeModelClient([])); });

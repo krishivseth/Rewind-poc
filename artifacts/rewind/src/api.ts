@@ -45,7 +45,7 @@ export interface SearchHit {
   session_id: string; session_title: string; repo_slug: string; branch_id: string; model_id: string
   branch_status: BranchStatus; step_index: number; kind: StepKind; tool_name: string | null; snippet: string
 }
-export interface Stats { tokens_used_today: number; daily_token_cap: number; branches: number; max_concurrent_branches: number; session_token_budget?: number; storage_backend?: 'object' | 'local'; read_only?: boolean; writes?: 'open' | 'warming_up' | 'read_only'; public_writes?: 'cheap' | 'off'; public_daily_token_cap?: number; cheap_model?: string; sandbox_python?: { ready: boolean; bin: string | null; error: string | null } }
+export interface Stats { tokens_used_today: number; daily_token_cap: number; branches: number; max_concurrent_branches: number; session_token_budget?: number; storage_backend?: 'object' | 'local'; read_only?: boolean; writes?: 'open' | 'warming_up' | 'read_only'; public_writes?: 'cheap' | 'signed_in' | 'off'; sign_in?: 'github' | 'off'; me?: { login: string; avatar: string | null } | null; public_max_model_calls?: number; public_daily_token_cap?: number; cheap_model?: string; sandbox_python?: { ready: boolean; bin: string | null; error: string | null } }
 
 export interface SessionSummary {
   id: string; title: string; repo_slug: string; repo_id: string; root_branch_id: string | null
@@ -116,6 +116,7 @@ export const api = {
   deleteSession: (id: string) => request<{ ok: boolean; branches_deleted: number }>(`/api/sessions/${id}`, { method: 'DELETE' }, true),
   search: (q: string) => request<{ q: string; results: SearchHit[] }>(`/api/search?q=${encodeURIComponent(q)}`),
   stats: () => request<Stats>('/api/stats'),
+  logout: () => request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }),
 }
 
 export const TERMINAL: BranchStatus[] = ['done', 'failed', 'cancelled']
