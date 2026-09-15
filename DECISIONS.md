@@ -177,3 +177,8 @@ Choices the spec left open, and what this codebase does about them.
     app and no vendor, and over a CAPTCHA because an accountable account deters bots better.
 54. **Two Railway environments.** `production` is the live showcase; `staging` gets its own
     Postgres and volume for testing deploys of the same code before they reach production.
+55. **Forks before the first commit reset to the base commit.** A fork whose boundary precedes any
+    commit used to inherit the parent's finished worktree, so "five identical forks from step 3"
+    were really forks of the solved repo and reported the tests already passing. The worktree now
+    resets to the repository's root commit in that case. Regression test added; the two affected
+    showcase sessions were re-recorded.

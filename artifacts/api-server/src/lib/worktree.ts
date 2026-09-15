@@ -52,6 +52,9 @@ export async function prepareBranchWorktree(branchId: string, baseBundleKey: str
   if (startCommit) {
     if (!(await git.commitExists(dest, startCommit))) throw new Error(`start commit ${startCommit} not found in restored history`);
     await git.resetHard(dest, startCommit);
+  } else if (parentBundleKey || parentBranchId) {
+    // forked before the parent's first commit: the repo must be the base state, not the parent's HEAD
+    await git.resetHard(dest, await git.rootCommit(dest));
   }
   return dest;
 }
