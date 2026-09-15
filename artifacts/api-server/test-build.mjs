@@ -11,6 +11,6 @@ const tests = (await readdir(path.join(root, "test"))).filter((f) => f.endsWith(
 await build({
   entryPoints: Object.fromEntries(tests.map((f) => [f.replace(/\.ts$/, ""), path.join(root, "test", f)])),
   outdir, outExtension: { ".js": ".mjs" }, bundle: true, platform: "node", format: "esm", sourcemap: "inline",
-  external: ["@google-cloud/storage", "pg-native", "pino", "pino-pretty", "express", "openai", "cors", "pino-http"],
+  external: ["@google-cloud/storage", "pg-native", "pino", "pino-pretty", "express", "openai", "cors", "pino-http", "compression"],
   plugins: [{ name: "external-pg", setup(b) { b.onResolve({ filter: /^pg$/ }, () => ({ path: `./${path.relative(outdir, pgEntry)}`, external: true })); } }],
 });
