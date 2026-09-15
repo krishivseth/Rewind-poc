@@ -1,5 +1,15 @@
 // Bundle Monaco locally so the Docker image has no CDN dependency.
-import * as monaco from 'monaco-editor'
+// Core editor only, plus the languages the seed repositories use. The full package bundles every
+// language and its worker, several times the size of this.
+import * as monaco from 'monaco-editor/editor/editor.api.js'
+import 'monaco-editor/languages/definitions/python/register.js'
+import 'monaco-editor/languages/definitions/typescript/register.js'
+import 'monaco-editor/languages/definitions/markdown/register.js'
+import 'monaco-editor/languages/definitions/yaml/register.js'
+import 'monaco-editor/languages/definitions/shell/register.js'
+import 'monaco-editor/languages/definitions/ini/register.js'
+import 'monaco-editor/languages/definitions/html/register.js'
+import 'monaco-editor/languages/definitions/css/register.js'
 import editorWorker from 'monaco-editor/editor/editor.worker.js?worker'
 import { loader } from '@monaco-editor/react'
 
@@ -39,14 +49,14 @@ export const EDITOR_OPTIONS = {
 }
 
 const EXT: Record<string, string> = {
-  py: 'python', ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript', json: 'json',
+  py: 'python', ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript', json: 'javascript',
   md: 'markdown', yml: 'yaml', yaml: 'yaml', toml: 'ini', ini: 'ini', cfg: 'ini', html: 'html', css: 'css',
   sh: 'shell', txt: 'plaintext', csv: 'plaintext', sql: 'sql', rs: 'rust', go: 'go', java: 'java', c: 'c', h: 'c', cpp: 'cpp',
 }
 export function languageFor(path: string): string {
   const name = path.split('/').pop() ?? ''
   if (name === 'Makefile') return 'makefile'
-  if (name === '.gitignore' || name === '.rewind.json') return name.endsWith('json') ? 'json' : 'plaintext'
+  if (name === '.gitignore' || name === '.rewind.json') return name.endsWith('json') ? 'javascript' : 'plaintext'
   const ext = name.includes('.') ? name.split('.').pop()!.toLowerCase() : ''
   return EXT[ext] ?? 'plaintext'
 }

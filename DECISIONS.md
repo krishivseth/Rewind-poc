@@ -162,3 +162,9 @@ Choices the spec left open, and what this codebase does about them.
     on top and switches the body between Steps, Files and Branches with a bar at the bottom; diff and
     compare modes jump to Steps. Stacking all three panes gave each a sliver of a 780px screen. The
     top bar drops the subtitle and token readout on small screens and the home search fills the bar.
+52. **Egress.** Responses are gzipped in-process (except SSE) because the platform meters bytes
+    leaving the container, not what its edge later compresses; hashed assets under `/assets` are
+    `immutable, max-age=1y` and `index.html` is `no-cache`; Monaco is built from the core editor plus
+    the ten languages the seed repos use instead of the full package, 4.0 MB down to 2.7 MB raw.
+    A first visit that opens a file costs about 0.8 MB of egress instead of 4.3 MB; a return visit
+    costs a few kilobytes of API JSON.
