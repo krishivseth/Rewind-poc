@@ -63,7 +63,7 @@ export const settings = {
   publicWrites: (process.env.REWIND_PUBLIC_WRITES ?? "cheap") as "cheap" | "signed_in" | "off",
   publicDailyTokenCap: num("PUBLIC_DAILY_TOKEN_CAP", 500_000),
   // shorter runs for visitors: forks of a half-finished run rarely need more
-  publicMaxModelCalls: num("PUBLIC_MAX_MODEL_CALLS", 15),
+  publicMaxModelCalls: num("PUBLIC_MAX_MODEL_CALLS", 20),
   // "signed_in": keyless writes need a GitHub sign-in; "cheap": anyone; "off": key only
   githubClientId: process.env.GITHUB_CLIENT_ID ?? "",
   githubClientSecret: process.env.GITHUB_CLIENT_SECRET ?? "",

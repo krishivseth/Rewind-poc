@@ -182,3 +182,9 @@ Choices the spec left open, and what this codebase does about them.
     were really forks of the solved repo and reported the tests already passing. The worktree now
     resets to the repository's root commit in that case. Regression test added; the two affected
     showcase sessions were re-recorded.
+56. **The call cap ends with a wrap-up, not a failure.** When a branch reaches its model-call limit
+    the last call is made without tools and asks for a summary; the branch ends `done` with a note
+    saying it stopped at the limit. A 15-call run that had just made its tests pass used to be
+    marked failed for running them once more. Keyless branches get 20 calls (was 15); the key gets 30.
+57. **The blank seed repo ships one passing placeholder test**, so pytest exits 0 before the agent
+    has written anything; "no tests ran" (exit 5) read as failure and sent models down the wrong path.

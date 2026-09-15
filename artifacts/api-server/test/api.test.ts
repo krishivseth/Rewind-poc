@@ -298,12 +298,15 @@ test("signed-in mode: GitHub session unlocks cheap-model writes with a shorter r
   assert.equal((await j("POST", "/api/sessions", { ...body, model_id: "anthropic/claude-sonnet-5" }, { Cookie: cookie })).status, 401);
   const done = await waitDone(r.data.root_branch_id);
   assert.equal(done.status, "done");
-  // a public branch is capped at PUBLIC_MAX_MODEL_CALLS
-  settings.publicMaxModelCalls = 1;
+  // a public branch is capped at PUBLIC_MAX_MODEL_CALLS; the last call is a tool-less wrap-up and the branch ends done
+  settings.publicMaxModelCalls = 2;
   r = await j("POST", "/api/sessions", body, { Cookie: cookie });
   const capped = await waitDone(r.data.root_branch_id);
-  assert.equal(capped.status, "failed"); assert.match(capped.error, /max steps 1/);
-  settings.publicMaxModelCalls = 15;
+  assert.equal(capped.status, "done"); assert.match(capped.error, /2-call limit/);
+  const cappedSteps = (await get(`/api/branches/${capped.id}/steps`)).data as Array<{ kind: string; content: { content?: string } }>;
+  assert.ok(cappedSteps.some((s) => s.kind === "user" && /reached the limit/.test(s.content.content ?? "")));
+  assert.equal(cappedSteps.filter((s) => s.kind === "assistant").length, 2);
+  settings.publicMaxModelCalls = 20;
   settings.publicWrites = "cheap";
 });
 

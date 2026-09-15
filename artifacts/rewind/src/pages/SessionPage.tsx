@@ -209,7 +209,7 @@ export default function SessionPage() {
             </div>
           )}
           {branch?.error && (
-            <div className="border-t border-line px-4 py-1.5 text-[11px] text-bad">{branch.status}: {branch.error}</div>
+            <div className={`border-t border-line px-4 py-1.5 text-[11px] ${branch.status === 'done' ? 'text-muted' : 'text-bad'}`}>{branch.status}: {branch.error}</div>
           )}
           {sel.contextOpen && branch && step && (
             <ContextDrawer branchId={branch.id} index={step.index} onClose={() => sel.setContextOpen(false)} />

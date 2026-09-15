@@ -116,16 +116,24 @@ export async function runBranch(branchId: string, client?: ModelClient): Promise
       checkLimits("model call");
       const isPublic = !!branch.createdBy && (branch.createdBy.startsWith("public:") || branch.createdBy.startsWith("user:"));
       const maxCalls = isPublic ? Math.min(settings.maxModelCalls, settings.publicMaxModelCalls) : settings.maxModelCalls;
-      if (turns >= maxCalls) throw new BranchStop("failed", `max steps ${maxCalls} hit`);
       if ((await sessionTokens()) >= settings.maxTotalTokensPerSession) throw new BranchStop("failed", `session token budget ${settings.maxTotalTokensPerSession} hit`);
+      // the last allowed call is a wrap-up: no tools, just a summary of where things stand
+      const wrapUp = turns >= maxCalls - 1;
+      if (wrapUp) {
+        const ask = { role: "user", content: `You have reached the limit of ${maxCalls} model calls for this run. Do not call any tools. Reply with a short summary of what you changed, whether the tests pass, and what is left to do.` };
+        messages.push(ask);
+        await recordStep(branchId, { kind: "user", content: ask });
+      }
       const t0 = Date.now();
-      const completion = await model.complete(branch.modelId, messages, tools.TOOL_SCHEMAS as unknown as unknown[], settings.maxOutputTokensPerCall);
+      const completion = await model.complete(branch.modelId, messages, wrapUp ? [] : (tools.TOOL_SCHEMAS as unknown as unknown[]), settings.maxOutputTokensPerCall);
       turns += 1;
       totalTokens += completion.inputTokens + completion.outputTokens;
       const assistant = completion.message as Record<string, unknown>;
+      if (wrapUp) delete assistant.tool_calls; // a model that ignores the instruction still ends here
       await recordStep(branchId, { kind: "assistant", content: assistant, inputTokens: completion.inputTokens, outputTokens: completion.outputTokens, latencyMs: Date.now() - t0 });
       messages.push(assistant);
       const toolCalls = (assistant.tool_calls as ToolCall[] | undefined) ?? [];
+      if (wrapUp) { finalStatus = "done"; finalError = `stopped at the ${maxCalls}-call limit; the model was asked to summarise`; break; }
       if (!toolCalls.length) { finalStatus = "done"; break; }
 
       for (const tc of toolCalls) {
